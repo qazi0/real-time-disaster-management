@@ -141,20 +141,15 @@ def evaluate_performance(test_model, input_tensor, args):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='TensorRT Inference Evaluation Script')
-    parser.add_argument('--model', type=str, default='ernet')
-    parser.add_argument('--weights', type=str, default=None)
-    parser.add_argument('--state', type=str, default=None)
-    parser.add_argument('--test-pc', type=int, default=30, metavar='N',
-                        help='percentage of data to use for testing (default: 30%)')
-    parser.add_argument('--quant', type=str, default='fp16', metavar='N',
-                        help='quantization scheme to use (default: fp16)')
-    parser.add_argument('--gpu', type=int, default=0, metavar='N',
-
-                        help='gpu device to use (default: 0)')
+    parser.add_argument('--model', type=str, default='ernet', help='Model to use (ernet | squeeze-ernet | squeeze-redconv)')
+    parser.add_argument('--weights', type=str, default=None, help='Path to pre-trained PyTorch weights (.pt) file')
+    parser.add_argument('--state', type=str, default=None, help='Path to TensorRT model state dict (.pth)')
+    parser.add_argument('--test-pc', type=int, default=30, metavar='N',help='percentage of data to use for testing (default: 30%)')
+    parser.add_argument('--quant', type=str, default='fp16', metavar='N',help='quantization scheme to use (default: fp16)')
+    parser.add_argument('--gpu', type=int, default=0, metavar='N',help='gpu device to use (default: 0)')
     parser.add_argument('--trt', action='store_true', default=False, help='Perform TensorRT inference')
     parser.add_argument('--no-cuda', action='store_true', default=False, help='disables CUDA inference')
-    parser.add_argument('--root-dir', type=str, default='AIDER',
-                        help='path to the root dir of AIDER')
+    parser.add_argument('--root-dir', type=str, default='AIDER',help='path to the root directory of AIDER')
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
