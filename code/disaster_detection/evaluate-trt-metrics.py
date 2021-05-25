@@ -51,25 +51,29 @@ def load_data(args):
     return test_loader
 
 
-def speed_testing(test_model, input_tensor, args):
+def evaluate_performance(test_model, input_tensor, args):
     test_model.eval()
     time_list = []
     num_hits = 0
+
     if args.cuda:
         print('Running inference on CUDA Device: ', args.gpu)
         # cuDnn configurations
         torch.backends.cudnn.enabled = True
         torch.backends.cudnn.benchmark = True
         torch.cuda.set_device(args.gpu)
-        if args.build:
-            test_model = build_trt_model(test_model, input_tensor, args)
-        else:
-            from torch2trt import TRTModule
-            test_model = TRTModule()
-            if args.state is not None:
-                test_model.load_state_dict(torch.load(args.state))
+        test_model = test_model.cuda()
+
+        if args.trt:
+            if args.build:
+                test_model = build_trt_model(test_model, input_tensor, args)
             else:
-                test_model.load_state_dict(torch.load('tensorrt_state_dicts/{}_{}_trt.pth'.format(args.model, args.quant)))
+                from torch2trt import TRTModule
+                test_model = TRTModule()
+                if args.state is not None:
+                    test_model.load_state_dict(torch.load(args.state))
+                else:
+                    test_model.load_state_dict(torch.load('tensorrt_state_dicts/{}_{}_trt.pth'.format(args.model, args.quant)))
 
 
         # Load data
@@ -78,32 +82,25 @@ def speed_testing(test_model, input_tensor, args):
         correct = 0
         f1_list = []
 
+        for batch_idx, (data, target) in enumerate(test_loader):
+            tic = time.time()
+            torch.cuda.synchronize()
+            data = data.cuda()
+            target = target.cuda()
 
-        if args.quant == 'fp16':
-            # Inference FP16
-            for batch_idx, (data, target) in enumerate(test_loader):
-                tic = time.time()
-                torch.cuda.synchronize()
-                data = data.cuda()
-                target = target.cuda()
+            # FP16 Inference
+            if args.trt and args.quant == 'fp16':
                 output = test_model(data.half())
-                preds = output.data.max(1, keepdim=True)[1]
-                time_list.append(time.time() - tic)
-                f1_list.append((preds,target))
-                correct += preds.eq(target.data.view_as(preds)).sum()
 
-        else:
-            # Inference FP32
-            for batch_idx, (data, target) in enumerate(test_loader):
-                tic = time.time()
-                torch.cuda.synchronize()
-                data = data.cuda()
-                target = target.cuda()
+            # FP32 Inference
+            else:
                 output = test_model(data)
-                preds = output.data.max(1, keepdim=True)[1]
-                time_list.append(time.time() - tic)
-                f1_list.append((preds,target))
-                correct += preds.eq(target.data.view_as(preds)).sum()
+
+            preds = output.data.max(1, keepdim=True)[1]
+            time_list.append(time.time() - tic)
+            f1_list.append((preds,target))
+            correct += preds.eq(target.data.view_as(preds)).sum()
+
        
         # Calculate F1 score
         f_score = F1(num_classes=5)
@@ -123,9 +120,17 @@ def speed_testing(test_model, input_tensor, args):
     print("     + Total time cost: {}s".format(sum(time_list)))
     print("     + Average time cost: {}s".format(sum(time_list) / len(test_loader.dataset)))
     print('     + Accuracy: %.2f%%' % (100. * correct.float() / len(test_loader.dataset)))
-    print("     + TensorRT Frames Per Second ({} iterations): {:.2f} FPS".format(len(test_loader.dataset),1 / (sum(time_list) / len(test_loader.dataset))))
+
+    if args.trt:
+        print("     + TensorRT Frames Per Second ({} iterations): {:.2f} FPS".format(len(test_loader.dataset),1 / (sum(time_list) / len(test_loader.dataset))))
+
+    else:
+        print("     + Frames Per Second ({} iterations): {:.2f} FPS".format(len(test_loader.dataset),1 / (sum(time_list) / len(test_loader.dataset))))
+    
     print('     + F1 SCORE : {:.5f}'.format(score))
-    print('     + Output datatype: ', output.dtype)
+
+    if args.trt:
+        print('     + Output datatype: ', output.dtype)
 
 
 if __name__ == '__main__':
@@ -140,7 +145,9 @@ if __name__ == '__main__':
     parser.add_argument('--quant', type=str, default='fp16', metavar='N',
                         help='quantization scheme to use (default: fp16)')
     parser.add_argument('--gpu', type=int, default=0, metavar='N',
+
                         help='gpu device to use (default: 0)')
+    parser.add_argument('--trt', action='store_true', default=False, help='Perform TensorRT inference')
     parser.add_argument('--no-cuda', action='store_true', default=False, help='disables CUDA inference')
     parser.add_argument('--root-dir', type=str, default='AIDER',
                         help='path to the root dir of AIDER')
@@ -179,4 +186,4 @@ if __name__ == '__main__':
 
     # To speed up inference by disabling gradients
     with torch.no_grad():
-        speed_testing(model, input_image, args)
+        evaluate_performance(model, input_image, args)
