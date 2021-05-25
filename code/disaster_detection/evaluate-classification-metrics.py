@@ -111,26 +111,63 @@ def evaluate_performance(test_model, input_tensor, args):
         
         score /= len(f1_list)
 
+        # Calculate total time
+        time_list = time_list[1:]
 
-    # Calculate total time
-    time_list = time_list[1:]
+        # Print Statistics
+        print("     + Done ", len(test_loader.dataset), " iterations inference !")
+        print("     + Total time cost: {}s".format(sum(time_list)))
+        print("     + Average time cost: {}s".format(sum(time_list) / len(test_loader.dataset)))
+        print('     + Accuracy: %.2f%%' % (100. * correct.float() / len(test_loader.dataset)))
 
-    # Print Statistics
-    print("     + Done ", len(test_loader.dataset), " iterations inference !")
-    print("     + Total time cost: {}s".format(sum(time_list)))
-    print("     + Average time cost: {}s".format(sum(time_list) / len(test_loader.dataset)))
-    print('     + Accuracy: %.2f%%' % (100. * correct.float() / len(test_loader.dataset)))
+        if args.trt:
+            print("     + TensorRT Frames Per Second ({} iterations): {:.2f} FPS".format(len(test_loader.dataset),1 / (sum(time_list) / len(test_loader.dataset))))
 
-    if args.trt:
-        print("     + TensorRT Frames Per Second ({} iterations): {:.2f} FPS".format(len(test_loader.dataset),1 / (sum(time_list) / len(test_loader.dataset))))
+        else:
+            print("     + Frames Per Second ({} iterations): {:.2f} FPS".format(len(test_loader.dataset),1 / (sum(time_list) / len(test_loader.dataset))))
+        
+        print('     + F1 SCORE : {:.5f}'.format(score))
+
+        if args.trt:
+            print('     + Output datatype: ', output.dtype)
 
     else:
-        print("     + Frames Per Second ({} iterations): {:.2f} FPS".format(len(test_loader.dataset),1 / (sum(time_list) / len(test_loader.dataset))))
-    
-    print('     + F1 SCORE : {:.5f}'.format(score))
+        print('Running inference on CPU')
 
-    if args.trt:
-        print('     + Output datatype: ', output.dtype)
+        # Load data
+        test_loader = load_data(args)
+
+        correct = 0
+        f1_list = []
+
+        for batch_idx, (data, target) in enumerate(test_loader):
+            tic = time.time()
+            output = test_model(data)
+            preds = output.data.max(1, keepdim=True)[1]
+            time_list.append(time.time() - tic)
+            f1_list.append((preds,target))
+            correct += preds.eq(target.data.view_as(preds)).sum()
+
+       
+        # Calculate F1 score
+        f_score = F1(num_classes=5)
+        score = 0
+        for pred in f1_list:
+            fixed_preds = pred[0].view(1, -1)
+            score += f_score(fixed_preds[0].cpu(), pred[1].cpu()) * 100
+        
+        score /= len(f1_list)
+
+        # Calculate total time
+        time_list = time_list[1:]
+
+        # Print Statistics
+        print("     + Done ", len(test_loader.dataset), " iterations inference !")
+        print("     + Total time cost: {}s".format(sum(time_list)))
+        print("     + Average time cost: {}s".format(sum(time_list) / len(test_loader.dataset)))
+        print('     + Accuracy: %.2f%%' % (100. * correct.float() / len(test_loader.dataset)))
+        print("     + CPU Frames Per Second ({} iterations): {:.2f} FPS".format(len(test_loader.dataset),1 / (sum(time_list) / len(test_loader.dataset))))
+        print('     + F1 SCORE : {:.5f}'.format(score))
 
 
 if __name__ == '__main__':
