@@ -5,41 +5,12 @@ import os
 from torch.utils.data import DataLoader
 from dataloaders.aider import AIDER
 from dataloaders.aider import aider_transforms, squeeze_transforms
-from torch2trt import torch2trt
+from torch2trt import TRTModule
 import tensorrt as trt
 from pytorch_lightning.metrics import F1
 
 
-def build_trt_model(model, input_tensor, args):
-    print('Building TensorRT model [',args.quant,'] (again)...')
-    test_model = model.cuda()
-    input_tensor = input_tensor.cuda()
-    if args.quant == 'fp16':
-        test_model = test_model.half()
-        input_tensor = input_tensor.half()
-        test_model = torch2trt(test_model, [input_tensor], max_batch_size=64, fp16_mode=True,
-                               max_workspace_size=1 << 30)
-    elif args.quant == 'fp32':
-        test_model = torch2trt(test_model, [input_tensor], max_batch_size=64, fp16_mode=False,
-                               max_workspace_size=1 << 30)
-    elif args.quant == 'int8':
-        test_model = test_model.half()
-        input_tensor = torch.tensor(input_tensor,dtype=torch.int8)
-        test_model = torch2trt(test_model, [input_tensor], max_batch_size=64, max_workspace_size=1 << 30,
-                               int8_mode=True)
-    
-    if not args.output:
-        print('Model built successfully. Saving to tensorrt_state_dicts/{}_{}_trt.pth'.format(args.model, args.quant))
-        torch.save(test_model.state_dict(), 'tensorrt_state_dicts/{}_{}_trt.pth'.format(args.model, args.quant))
-    else:
-        print('Model built successfully. Saving to tensorrt_state_dicts/{}_{}_{}_trt.pth'.format(args.model, args.quant, args.output))
-        torch.save(test_model.state_dict(), 'tensorrt_state_dicts/{}_{}_{}_trt.pth'.format(args.model, args.quant, args.output))
-
-    return test_model
-
-
 def load_data(args):
-    print('Loading data...')
     transformed_dataset = AIDER("dataloaders/aider_labels.csv", args.root_dir, transform=aider_transforms if args.model == 'ernet' else squeeze_transforms)
     total_count = 6432
     train_count = int(0.5 * total_count)
@@ -48,6 +19,7 @@ def load_data(args):
     train_set, valid_set, test_set = torch.utils.data.random_split(transformed_dataset,
                                                                    (train_count, valid_count, test_count))
     test_loader = DataLoader(test_set, batch_size=16, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
+    print('Loaded all data.')
     return test_loader
 
 
@@ -55,9 +27,11 @@ def evaluate_performance(test_model, input_tensor, args):
     test_model.eval()
     time_list = []
     num_hits = 0
+    correct = 0
+    f1_list = []
 
     if args.cuda:
-        print('Running inference on CUDA Device: ', args.gpu)
+        print('Initializing inference on CUDA Device: ', args.gpu)
         # cuDnn configurations
         torch.backends.cudnn.enabled = True
         torch.backends.cudnn.benchmark = True
@@ -65,23 +39,17 @@ def evaluate_performance(test_model, input_tensor, args):
         test_model = test_model.cuda()
 
         if args.trt:
-            if args.build:
-                test_model = build_trt_model(test_model, input_tensor, args)
+            test_model = TRTModule()
+            if args.state is not None:
+                test_model.load_state_dict(torch.load(args.state))
             else:
-                from torch2trt import TRTModule
-                test_model = TRTModule()
-                if args.state is not None:
-                    test_model.load_state_dict(torch.load(args.state))
-                else:
-                    test_model.load_state_dict(torch.load('tensorrt_state_dicts/{}_{}_trt.pth'.format(args.model, args.quant)))
+                test_model.load_state_dict(torch.load('tensorrt_state_dicts/{}_{}_trt.pth'.format(args.model, args.quant)))
 
 
         # Load data
         test_loader = load_data(args)
 
-        correct = 0
-        f1_list = []
-
+        print('Running inference...')
         for batch_idx, (data, target) in enumerate(test_loader):
             tic = time.time()
             torch.cuda.synchronize()
@@ -129,7 +97,7 @@ def evaluate_performance(test_model, input_tensor, args):
         print('     + F1 SCORE : {:.5f}'.format(score))
 
         if args.trt:
-            print('     + Output datatype: ', output.dtype)
+            print('     + Output data type: ', output.dtype)
 
     else:
         print('Running inference on CPU')
@@ -174,7 +142,6 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='TensorRT Inference Evaluation Script')
     parser.add_argument('--model', type=str, default='ernet')
-    parser.add_argument('--output', type=str, default=None)
     parser.add_argument('--weights', type=str, default=None)
     parser.add_argument('--state', type=str, default=None)
     parser.add_argument('--test-pc', type=int, default=30, metavar='N',
@@ -188,38 +155,31 @@ if __name__ == '__main__':
     parser.add_argument('--no-cuda', action='store_true', default=False, help='disables CUDA inference')
     parser.add_argument('--root-dir', type=str, default='AIDER',
                         help='path to the root dir of AIDER')
-    parser.add_argument('--build', action='store_true', default=False, help='Builds model again')
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
     model = None
     input_image = None
 
-    if not os.path.exists('tensorrt_state_dicts'):
-        os.mkdir('tensorrt_state_dicts')
-
     if args.model == 'ernet':
-        ptfile = args.weights
         if not args.weights:
-            ptfile = 'weights/ernet.pt'
+            args.weights = 'weights/ernet.pt'
         input_image = torch.randn(1, 3, 240, 240)
         print('ErNet Speed testing [',args.quant,'] with AIDER test images...')
 
     elif args.model == 'squeeze-ernet':
-        ptfile = args.weights
         if not args.weights:
-            ptfile = 'weights/Squeeze-ernet-92f1score.pt'
+            args.weights = 'weights/Squeeze-ernet-92f1score.pt'
         input_image = torch.randn(1, 3, 140, 140)
         print('Squeeze_ErNet Speed [',args.quant,'] with AIDER test images...')
 
     elif args.model == 'squeeze-redconv':
-        ptfile = args.weights
         if not args.weights:
-            ptfile = 'weights/Squeeze-ernet-redconv92acc.pt'
+            args.weights = 'weights/Squeeze-ernet-redconv92acc.pt'
         input_image = torch.randn(1, 3, 140, 140)
         print('Squeeze ErNet Speed (RedConv) [',args.quant,'] with AIDER test images...')
 
-    model = torch.load(ptfile, map_location='cpu')
+    model = torch.load(args.weights, map_location='cpu')
 
     # To speed up inference by disabling gradients
     with torch.no_grad():
