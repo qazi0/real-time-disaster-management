@@ -30,7 +30,7 @@ We have tested our model's power consumption requirement on Nvidia Jetson TX2 an
 
 
 
-## Squeeze ErNET RedConv Topology 
+## Squeeze ErNET RedConv 
 Squeeze ErNET RedConv is a compressed version of Squeeze ErNET with Reduced Convolutional layers which reduce the number of convolutional filters after every ACFF block. 
 
 ### Topology
