@@ -14,8 +14,6 @@ This repository proposes a method for real time disaster detection and classific
 ### Atrous Convolution Feature Fusion (ACFF) Block 
 ![ACFF Block](resources/ACFF.png)
 
-## Environment Setup
-
 ## Inference
 To run real time inference on your webcam stream use  `real-time-inference.py`
 ```
@@ -56,7 +54,7 @@ python evaluate-classification-metrics.py --model {mode} --weights weights/{mode
 Add `--trt` and `--state path/to/pth/file` flags for evaluating TensorRT engine's performance
 
 ## Power Consumption
-Power usage of model can be calculated using `calculate-power-usage.py` script
+Power usage of model on Nvidia Jetson TX2 can be calculated using `calculate-power-usage.py` script
 ```
 python calculate-power-usage.py --model {model} --weights weights/{model.pt} --root-dir path/to/data 
 ```
