@@ -3,12 +3,12 @@
  - Squeeze ErNET RedConv
  
 ## Atrous Convolution Feature Fusion (ACFF) Block 
-![ACFF Block](resources/ACFF.png)
+![ACFF Block](/code/disaster_detection/resources/ACFF.png)
 
 ## Squeeze ErNET 
 Squeeze ErNET is an improved version of EmergencyNET 
 ### Topology 
-![Squeeze ErNET Topology](resources/sq_ernet_topology.png)
+![Squeeze ErNET Topology](code/disaster_detection/resources/sq_ernet_topology.png)
 
 ### Results
 Squeeze ErNET's performance on Aerial Imagery Dataset for Emergency Response:
@@ -24,7 +24,7 @@ Squeeze ErNET's performance on Aerial Imagery Dataset for Emergency Response:
 Squeeze ErNET RedConv is a compressed version of Squeeze ErNET with Reduced Convolutional layers which reduce the number of convolutional filters after every ACFF block. 
 
 ### Topology
-![Squeeze ErNET RedConv Topology](resources/redconv_topology.png)
+![Squeeze ErNET RedConv Topology](code/disaster_detection/resources/redconv_topology.png)
 
 ### Results
 Squeeze ErNET RedConv's performance on Aerial Imagery Dataset for Emergency Response:
