@@ -5,8 +5,6 @@ import os
 from torch.utils.data import DataLoader
 from dataloaders.aider import AIDER
 from dataloaders.aider import aider_transforms, squeeze_transforms
-from torch2trt import TRTModule
-import tensorrt as trt
 from pytorch_lightning.metrics import F1
 
 
@@ -39,6 +37,7 @@ def evaluate_performance(test_model, input_tensor, args):
         test_model = test_model.cuda()
 
         if args.trt:
+            from torch2trt import TRTModule
             test_model = TRTModule()
             if args.state is not None:
                 test_model.load_state_dict(torch.load(args.state))
@@ -64,6 +63,7 @@ def evaluate_performance(test_model, input_tensor, args):
             else:
                 output = test_model(data)
 
+            torch.cuda.synchronize()
             preds = output.data.max(1, keepdim=True)[1]
             time_list.append(time.time() - tic)
             f1_list.append((preds,target))
