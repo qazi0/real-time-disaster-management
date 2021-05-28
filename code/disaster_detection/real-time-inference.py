@@ -92,4 +92,5 @@ if __name__ == '__main__':
 
     model = torch.load(args.weights, map_location='cpu').eval()
 
-    run_inference(model, transforms, args)
+    with torch.no_grad():
+        run_inference(model, transforms, args)
