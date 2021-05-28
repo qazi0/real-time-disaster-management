@@ -19,8 +19,18 @@ Squeeze ErNET's performance on Aerial Imagery Dataset for Emergency Response:
 | TRT FP32 | 88.45%	| 92.51%| 2951.13| 416.46	|
 | TRT FP16|90.06%	|90.62%| 3430.17 |547.46|
 
+### Power Consumption
+We have tested our model's power consumption requirement on Nvidia Jetson TX2 and further evaluated the energy per frame:
 
-## Squeeze ErNET RedConv Topology 
+|Precision| Energy/ frame|
+|---------|--------------|
+|Pytorch 32| 1.6 mJ|
+|TRT fp32|1.83 mJ|
+|TRT fp16|1.857 mJ|
+
+
+
+## Squeeze ErNET RedConv 
 Squeeze ErNET RedConv is a compressed version of Squeeze ErNET with Reduced Convolutional layers which reduce the number of convolutional filters after every ACFF block. 
 
 ### Topology
@@ -35,4 +45,11 @@ Squeeze ErNET RedConv's performance on Aerial Imagery Dataset for Emergency Resp
 | TRT FP32 | 94.1%	|93.281%| 2988.54|497.23	|
 | TRT FP16|93.79%	|94.375%| 3196.18|569.37|
 
+### Power Consumption
+We have tested our model's power consumption requirement on Nvidia Jetson TX2 and further evaluated the energy per frame:
 
+|Precision| Energy/ frame|
+|---------|--------------|
+|Pytorch 32|1.46 mJ|
+|TRT fp32|1.48 mJ|
+|TRT fp16|1.472 mJ|
