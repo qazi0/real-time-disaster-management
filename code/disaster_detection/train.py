@@ -1,8 +1,8 @@
 import os
+import sys
 import torch
-import argparse
 import torch.optim as optim
-
+import argparse
 from torch.utils.data import DataLoader
 from model.label_smoothing import LabelSmoothingCrossEntropy
 from model.ernet import ErNET
@@ -10,10 +10,12 @@ from model.squeeze_ernet import Squeeze_ErNET
 from model.squeeze_ernet_redconv import Squeeze_RedConv
 from dataloaders.aider import AIDER, aider_transforms, squeeze_transforms
 from pytorch_lightning.metrics import F1
+import torchsummary
 
 saves_dir = 'saves'
 debug = False
 prev_acc = 0
+
 
 def train(args, epoch):
     model.train()
@@ -22,13 +24,12 @@ def train(args, epoch):
         if debug:
             print('Data shape= ', data.shape, ' Target shape= ', target.shape)
 
-        # target = torch.as_tensor(target, dtype=torch.long)
         if args.cuda:
             data, target = data.cuda(), target.cuda()
 
         optimizer.zero_grad()
         output = model(data)
-        # output = output.cuda()
+        output = output.cuda()
 
         if debug:
             print('dtype of model output = ', output.dtype)
@@ -93,6 +94,10 @@ def validation_test(args, save_model=False):
     if new_acc > prev_acc:
         # save model
         if save_model:
+            if not os.path.exists(saves_dir):
+                os.mkdir(saves_dir)
+
+            save_location = os.path.join(saves_dir, save_file)
             torch.save(model, save_location)
             print('Model saved at: ', save_location)
         prev_acc = new_acc
@@ -100,11 +105,9 @@ def validation_test(args, save_model=False):
 
 if __name__ == '__main__':
 
-    torch.backends.cudnn.benchmark = True
-
-    parser = argparse.ArgumentParser(description='PyTorch TRAINING on AIDER VOC')
+    parser = argparse.ArgumentParser(description='PyTorch ErNet on AIDER VOC')
     parser.add_argument('--model', type=str, default='ernet')
-    parser.add_argument('--batch-size', type=int, default=32, metavar='N',
+    parser.add_argument('--batch-size', type=int, default=128, metavar='N',
                         help='input batch size for training (default: 32)')
     parser.add_argument('--epochs', type=int, default=100, metavar='N',
                         help='number of epochs to train (default: 100)')
@@ -115,15 +118,18 @@ if __name__ == '__main__':
     parser.add_argument('--root-dir', type=str, default='AIDER',
                         help='path to the root dir of AIDER')
     parser.add_argument('--weights', type=str, default=None,
-                        help='path to the trained PyTorch weights (.pt) file')
+                        help='path to the Pytorch trained weights (.pt) file')
     parser.add_argument('--eval', default=False, action='store_true',
                         help='perform evaluation of trained model')
     parser.add_argument('--resume', default=False, action='store_true',
                         help='resume training from last saved weights')
-    parser.add_argument('--collab', default=False,
+    parser.add_argument('--summary',
+                        action='store_true', help='Print model summary')
+    parser.add_argument('--collab',
                         action='store_true', help='use dataset from google collab')
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
+
 
     print(args, end='\n\n')
     save_location = args.weights
@@ -154,8 +160,13 @@ if __name__ == '__main__':
             save_location = os.path.join(saves_dir, 'squeeze-redconv.pt')
 
     if args.cuda:
+        torch.backends.cudnn.benchmark = True
         torch.cuda.set_device(0)
-        model.cuda()
+        model = model.cuda()
+	
+    if args.summary:
+        [torchsummary.summary(model, (3, 240, 240)) if args.model == 'ernet' else torchsummary.summary(model, (3, 140, 140)) ]
+        sys.exit(0)
 
     if args.collab:
         transformed_dataset = AIDER("dataloaders/aider_labels.csv", '/content/drive/My Drive/FYP/Dataset/AIDER/',
@@ -189,7 +200,6 @@ if __name__ == '__main__':
     if args.eval:
         model = torch.load(os.path.join(save_location))
         test(args)
-   
     else:
         if args.resume:
             model = torch.load(save_location)
