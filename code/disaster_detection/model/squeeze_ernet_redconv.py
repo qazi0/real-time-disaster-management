@@ -1,5 +1,5 @@
 import torch.nn as nn
-from model.ernet import ACFF
+from model.acff import ACFF
 
 debug = False
 
