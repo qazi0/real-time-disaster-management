@@ -34,15 +34,14 @@ def run_inference(model, transforms, args):
     vs = WebcamVideoStream(src=0).start()
     # loop over some frames...this time using the threaded stream
     while True:
-        frame = vs.read()
-        frame = imutils.resize(frame, width=1366, height=768)
+        frame = imutils.resize(vs.read(), width=args.width, height=args.height)
         img = transforms(Image.fromarray(frame))
         if args.cuda:
             img = img.cuda()
 
         img = torch.reshape(img, input_shape)
 
-        if args.quant:
+        if args.quant and not args.no_cuda:
             output = model(img.half())
         else:
             output = model(img)
@@ -83,7 +82,10 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='ernet')
     parser.add_argument('--no-cuda', action='store_true', default=False, help='disables CUDA inference')
     parser.add_argument('--trt', action='store_true', help='Do TensorRT inference too')
-
+    parser.add_argument('--width', type=int, default=640,
+                        help='Window width')
+    parser.add_argument('--height', type=int, default=480,
+                        help='Window height')
     parser.add_argument('--weights', type=str, default=None,
                         help='path to the trained pytorch weights (.pt) file')
     parser.add_argument('--quant', type=str, default='fp16', metavar='N',
@@ -93,7 +95,7 @@ if __name__ == '__main__':
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
     print(args)
-    
+
     if args.model == 'ernet':
         transforms = aider_transforms
         if args.weights is None:
