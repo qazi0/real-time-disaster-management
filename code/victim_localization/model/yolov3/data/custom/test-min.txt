@@ -1,0 +1,10 @@
+data/custom/test/images/collapsed_building_image0078.jpg
+data/custom/test/images/collapsed_building_image0106.jpg
+data/custom/test/images/collapsed_building_image0508.jpg
+data/custom/test/images/fire_image0232.jpg
+data/custom/test/images/flood_image0205.jpg
+data/custom/test/images/flood_image0273.jpg
+data/custom/test/images/flood_image0299.jpg
+data/custom/test/images/normal_image0054.jpg
+data/custom/test/images/normal_image2085.jpg
+data/custom/test/images/traffic_incident_image0393.jpg
