@@ -97,7 +97,6 @@ def validation_test(args, save_model=False):
             if not os.path.exists(saves_dir):
                 os.mkdir(saves_dir)
 
-            save_location = os.path.join(saves_dir, save_file)
             torch.save(model, save_location)
             print('Model saved at: ', save_location)
         prev_acc = new_acc
@@ -119,8 +118,6 @@ if __name__ == '__main__':
                         help='path to the root dir of AIDER')
     parser.add_argument('--weights', type=str, default=None,
                         help='path to the Pytorch trained weights (.pt) file')
-    parser.add_argument('--eval', default=False, action='store_true',
-                        help='perform evaluation of trained model')
     parser.add_argument('--resume', default=False, action='store_true',
                         help='resume training from last saved weights')
     parser.add_argument('--summary',
@@ -196,17 +193,13 @@ if __name__ == '__main__':
         print('Labels.shape= ', labels.shape)
 
     criterion = LabelSmoothingCrossEntropy(reduction='sum')
-
-    if args.eval:
-        model = torch.load(os.path.join(save_location))
-        test(args)
-    else:
-        if args.resume:
-            model = torch.load(save_location)
-            validation_test(args)
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
-        for epoch in range(1, args.epochs + 1):
-            train(args, epoch)
-            validation_test(args, save_model=True)
-            if epoch % 40 == 0:
-                optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['lr'] * 0.0001
+    
+    if args.resume:
+        model = torch.load(save_location)
+        validation_test(args)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    for epoch in range(1, args.epochs + 1):
+        train(args, epoch)
+        validation_test(args, save_model=True)
+        if epoch % 40 == 0:
+            optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['lr'] * 0.0001
