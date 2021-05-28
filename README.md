@@ -7,11 +7,11 @@ This repository has extended the work of CVPRW 2019 Paper [Deep-Learning-Based A
 
 ## Features
 We have added the following additional features to the work of previously mentioned papers:
-- Two new architecture for AIDER with improved performance and efficiency
+- Two new architectures for AIDER with improved performance and efficiency
 - Quantized versions of proposed architectures 
 - Accelerated inference speed
 - A new dataset AIDER-Detect for victim localization
-- Yolov3 and Yolov4 for AIDER Detect
-- Quantized Yolo for AIDER Detect
+- YOLOv3 and YOLOv4 for AIDER-Detect
+- Quantized YOLO (v3 & v4) for AIDER-Detect
 - Power efficient networks
 
