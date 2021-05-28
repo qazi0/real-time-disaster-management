@@ -92,6 +92,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
+    print(args)
+    
     if args.model == 'ernet':
         transforms = aider_transforms
         if args.weights is None:
