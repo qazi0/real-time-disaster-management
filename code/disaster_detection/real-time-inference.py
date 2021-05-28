@@ -13,6 +13,8 @@ from dataloaders.aider import aider_transforms, squeeze_transforms
 
 def run_inference(model, transforms, args):
 
+    classes =['collapsed building','fire','flooded areas','normal','traffic incident']
+
     if args.cuda:
         torch.backends.cudnn.enabled = True
         torch.backends.cudnn.benchmark = True
@@ -26,25 +28,40 @@ def run_inference(model, transforms, args):
     prev_frame_time = 0
     fps_list = []
 
+    input_shape = (1,3,240,240) if args.model == 'ernet' else (1,3,140,140)
+
     print("Running inference...")
     vs = WebcamVideoStream(src=0).start()
     # loop over some frames...this time using the threaded stream
     while True:
         frame = vs.read()
-        # frame = imutils.resize(frame, width=1366, height=768)
+        frame = imutils.resize(frame, width=1366, height=768)
         img = transforms(Image.fromarray(frame))
         if args.cuda:
             img = img.cuda()
 
-        img = img.reshape((1, 3, 240, 240))  if args.model == 'ernet' else img.reshape((1, 3, 140, 140))
+        img = torch.reshape(img, input_shape)
 
-        output = model(img)
+        if args.quant:
+            output = model(img.half())
+        else:
+            output = model(img)
+
+        predicted_class = output.data.max(1,keepdim=True)[1]
+
+        print("Predicted class is " + classes[predicted_class],end=' ')
+        out = output[0]
+        confidence = int((out[predicted_class]*100)[0][0].item())
+
+        print("with confidence level : " + str(confidence) +'%', end='\t')
+        text = classes[predicted_class]+' with confidence level '+str(confidence)+'%' 
+        cv2.putText(frame,text,(10,15),cv2.FONT_HERSHEY_SIMPLEX,0.43,(255,255,255),1,cv2.LINE_AA)
 
         new_frame_time = time.time()
         fps = 1/(new_frame_time-prev_frame_time) 
         prev_frame_time = new_frame_time
 
-        print('FPS: {:.3f}'.format(fps), end='\r')
+        print('FPS: {:.3f}'.format(fps))
         fps_list.append(fps)
         
         # if fps_update_index % 15 == 0:
