@@ -1,0 +1,5 @@
+classes=2
+train=data/custom/train-min.txt
+valid=data/custom/test-min.txt
+names=data/aider.names
+
