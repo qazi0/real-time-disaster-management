@@ -4,7 +4,7 @@ This repository contains pre trained models for object detection on AIDER Detect
 ![Victim Localization](/code/victim_localization/model/yolov3/detection_results.PNG)
 
 ## AIDER Detect
-We have created a new dataset for object detection on aerial disaster imagery – named as AIDER Detect. It contains 2 Classes – person and vehicle and about 1428 images containing 6900 vehicles and 2100 humans in total. # Real Time Victim Localization for Disaster Management
+We have created a new dataset for object detection on aerial disaster imagery – named as AIDER Detect. It contains 2 Classes – person and vehicle and about 1428 images containing 6900 vehicles and 2100 humans in total. 
 
 ![AIDER_detect](/code/victim_localization/model/yolov3/aider_detect.jpg)
 
