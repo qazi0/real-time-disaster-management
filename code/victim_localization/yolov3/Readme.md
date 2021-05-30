@@ -3,6 +3,12 @@ Detecting humans and vehicles in a disaster classified image is used to estimate
 This repository contains pre trained models for object detection on AIDER Detect using [You Only Look Once](https://arxiv.org/abs/1506.02640)
 ![Victim Localization](/code/victim_localization/yolov3/resources/detection_results.PNG)
 
+## Setup Requirements
+Inorder to install all requirements for this implementation use this command
+```
+pip install -U -r requirements.txt
+```
+
 ## Dataset
 We have used [Object Detection Dataset for Emergency Response- ODDER](https://www.kaggle.com/maryamsana/yolov5emergencyresponse) for training YOLO models
 
