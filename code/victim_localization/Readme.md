@@ -11,7 +11,7 @@ Implementation in this directory has following features
 
 
 # Dataset
-We have introduced [Object Detection Dataset for Emergency Response- ODDER](https://www.kaggle.com/maryamsana/yolov5emergencyresponse) with two classes.
+We have introduced [Object Detection Dataset for Emergency Response - ODDER](https://www.kaggle.com/maryamsana/yolov5emergencyresponse) with two classes.
 - Person
 - Vehicle
 
