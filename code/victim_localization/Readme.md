@@ -9,8 +9,10 @@ Implementation in this directory has following features
 - Pretrained YOLO models on AIDER Detect
 - Quantized YOLO models
 
+## Setup Requirement
+The implementation of this repository has been tested on Ubuntu 18.04.5 LTS and Ubuntu 16.04.6 LTS with 5.4.0-73-generic and 4.4.0-210-generic kernels respectively. 
 
-# Dataset
+## Dataset
 We have introduced [Object Detection Dataset for Emergency Response - ODDER](https://www.kaggle.com/maryamsana/yolov5emergencyresponse) with two classes.
 - Person
 - Vehicle
