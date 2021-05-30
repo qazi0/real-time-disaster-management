@@ -1,0 +1,42 @@
+# Victim Localization for Disaster Managment
+This repository provides the pretrained and optimized YOLO models for detecting disaster victims in aerial imagery.
+
+![example](/code/victim_localization/yolov3/resources/detection_results.PNG)
+
+## Features
+Implementation in this directory has following features
+- New object detection dataset for emergency response
+- Pretrained YOLO models on AIDER Detect
+- Quantized YOLO models
+
+
+# Dataset
+Emergency response object detection dataset can be downloaded from kaggle. 
+Before downloading dataset from kaggle follow the following steps:
+```
+pip install kaggle
+cd ~/.kaggle
+```
+Go to your kaggle.com/{username}/account and click on generate new API token to download kaggle.json
+
+```
+mv Downloads/kaggle.json /.kaggle/kaggle.json
+cd ~/.kaggle
+chmod 600 kaggle.json
+```
+Now your kaggle authentication is complete.
+Use the following command to download dataset for YOLOv3 and YOLOv4
+```
+kaggle datasets download -d kagglerx1/aiderdetectionyolo
+```
+Use the following command to download dataset for YOLOv5
+```
+kaggle datasets download -d maryamsana/yolov5emergencyresponse
+```
+
+# Code Organization
+The implementation contains code on following levels:
+- **tensorrt_inference:** contains tensorrt accelerated engines of pretrained YOLO models
+- **yolov3:** contains pretrained YOLOv3 and YOLO4 models
+- **yolov5:** contains pretrained YOLOv5 models
+
