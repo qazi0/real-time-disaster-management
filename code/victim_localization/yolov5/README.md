@@ -3,6 +3,12 @@ Detecting humans and vehicles in a disaster classified image is used to estimate
 
 ![yolov5_detection](/code/victim_localization/yolov5/runs/detect/exp/normal_image0054.jpg)
 
+## Setup Requirements
+Inorder to install all requirements for this implementation use this command
+```
+pip install -U -r requirements.txt
+```
+
 ## Dataset
 We have used [Object Detection Dataset for Emergency Response- ODDER for training YOLO models](https://www.kaggle.com/maryamsana/yolov5emergencyresponse)
 
