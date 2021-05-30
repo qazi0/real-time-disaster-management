@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 from torch2trt import TRTModule
 from imutils.video import WebcamVideoStream
+from imutils.video import FileVideoStream
 from dataloaders.aider import aider_transforms, squeeze_transforms
 
 
