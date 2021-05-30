@@ -40,7 +40,11 @@ def run_inference(model, transforms, args):
 
     # loop over some frames...this time using the threaded stream
     while True:
-        frame = imutils.resize(vs.read(), width=args.width, height=args.height)
+        frame = vs.read()
+        if frame is None:
+            break
+
+        frame = imutils.resize(frame, width=args.width, height=args.height)
         img = transforms(Image.fromarray(frame))
         if args.cuda:
             img = img.cuda()
@@ -58,7 +62,7 @@ def run_inference(model, transforms, args):
         out = output[0]
         confidence = int((out[predicted_class]*100)[0][0].item())
 
-        print("with confidence level : " + str(confidence) +'%', end='\t')
+        print("with confidence level : " + str(confidence) +'%', end=' \t')
         text = classes[predicted_class]+' with confidence level '+str(confidence)+'%' 
         cv2.putText(frame,text,(10,15),cv2.FONT_HERSHEY_SIMPLEX,0.43,(255,255,255),1,cv2.LINE_AA)
 
