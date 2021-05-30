@@ -47,7 +47,7 @@ def run_inference(model, transforms, args):
 
         img = torch.reshape(img, input_shape)
 
-        if args.quant and not args.no_cuda:
+        if args.quant and args.trt:
             output = model(img.half())
         else:
             output = model(img)
@@ -100,6 +100,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
+
+    if args.trt and args.no_cuda:
+        raise ValueError('TRT inference cannot be done on CPU! Please remove --no-cuda argument.')
 
     print(args)
 
