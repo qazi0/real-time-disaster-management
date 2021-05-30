@@ -153,6 +153,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
+    torch.manual_seed(1947)
+    
     model = None
     input_image = None
 
