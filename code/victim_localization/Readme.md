@@ -5,12 +5,12 @@ This repository provides the pretrained and optimized YOLO models for detecting 
 
 ## Features
 Implementation in this directory has following features
-- New object detection dataset for emergency response
-- Pretrained YOLO models on AIDER Detect
+- New Object Detection Dataset for Emergency Response ([ODDER](https://www.kaggle.com/maryamsana/yolov5emergencyresponse))
+- Pretrained YOLO models on ODDER
 - Quantized YOLO models
 
 ## Setup Requirement
-The implementation of this repository has been tested on Ubuntu 18.04.5 LTS and Ubuntu 16.04.6 LTS with 5.4.0-73-generic and 4.4.0-210-generic kernels respectively. 
+The implementation of this repository has been tested on x86_64 Ubuntu 18.04.5 LTS 5.4.0-73-generic and Ubuntu 16.04.6 LTS 4.4.0-210-generic, as well as NVIDIA Jetson TX2 (aarch64 NVIDIA JetPack 4.4.2). 
 
 ## Dataset
 We have introduced [Object Detection Dataset for Emergency Response - ODDER](https://www.kaggle.com/maryamsana/yolov5emergencyresponse) with two classes.
@@ -28,7 +28,7 @@ Before downloading dataset from kaggle follow the following steps:
 pip install kaggle
 cd ~/.kaggle
 ```
-Go to your kaggle.com/{username}/account and click on generate new API token to download kaggle.json
+Go to your `kaggle.com/{username}/account` and click on generate new API token to download `kaggle.json`
 
 ```
 mv Downloads/kaggle.json /.kaggle/kaggle.json
