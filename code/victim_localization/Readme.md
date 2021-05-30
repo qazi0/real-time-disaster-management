@@ -14,7 +14,9 @@ Implementation in this directory has following features
 We have introduced [Object Detection Dataset for Emergency Response- ODDER](https://www.kaggle.com/maryamsana/yolov5emergencyresponse) with two classes.
 - Person
 - Vehicle
+
 ODDER contains total 3930 labelled images containing 6900 vehicles and 2100 humans in total.
+
 ![ODDER](/code/victim_localization/yolov3/resources/aider_detect.jpg)
 
 
