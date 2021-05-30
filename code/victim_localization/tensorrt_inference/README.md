@@ -1,7 +1,8 @@
-## TensorRT Inference for YOLOv3 and v4 on AIDER-DETECT
+## TensorRT Inference for YOLOv3 and v4 on ODDER
 
 ### (Complete README to be added soon)
 
+TensorRT-accelerated inference with YOLOv3-Tiny and YOLOv4-Tiny models on the Object Detection Dataset for Emergency Response (ODDER)
 
 ### Setup | Building YOLO layer plugin
 Go to the `plugins/` directory and `make` the yolo layer plugin to generate `libyolo_layer.so`:
