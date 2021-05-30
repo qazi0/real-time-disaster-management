@@ -166,7 +166,7 @@ def main():
     args = parse_args()
     if args.category_num <= 0:
         raise SystemExit('ERROR: bad category_num (%d)!' % args.category_num)
-    if not os.path.isfile('yolo/%s.trt' % args.model):
+    if not os.path.isfile('yolo/engines/%s.trt' % args.model):
         raise SystemExit('ERROR: file (yolo/engines/%s.trt) not found!' % args.model)
 
     cls_dict = get_cls_dict(args.category_num)
