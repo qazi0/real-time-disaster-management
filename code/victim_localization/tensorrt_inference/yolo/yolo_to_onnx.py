@@ -19,6 +19,9 @@ def parse_args():
         '-c', '--category_num', type=int, default=2,
         help='number of object categories (obsolete)')
     parser.add_argument(
+        '-w', '--weights', type=str, default=None,
+        help='path to weights file)')
+    parser.add_argument(
         '-m', '--model', type=str, required=True,
         help=('[yolov3-tiny|yolov3|yolov3-spp|yolov4-tiny|yolov4|'
               'yolov4-csp|yolov4x-mish]-[{dimension}], where '
@@ -884,7 +887,7 @@ def main():
     cfg_file_path = 'cfg/%s.cfg' % args.model
     if not os.path.isfile(cfg_file_path):
         raise SystemExit('ERROR: file (%s) not found!' % cfg_file_path)
-    weights_file_path = 'weights/%s.weights' % args.model
+    weights_file_path = args.weights if args.weights else 'weights/%s.weights' % args.model
     if not os.path.isfile(weights_file_path):
         raise SystemExit('ERROR: file (%s) not found!' % weights_file_path)
     output_file_path = 'onnx/%s.onnx' % args.model
