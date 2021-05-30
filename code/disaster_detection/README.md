@@ -1,4 +1,4 @@
-# Real-time Object Detection For Disaster Management From Aerial Imagery
+# Disaster Detection For Disaster Management From Aerial Imagery
 
 This repository proposes a method for real time disaster detection and classification using state of the art deep learning techniques. We have used a emergency response dataset referred as [Aerial Imagery Dataset for Emergency Response - AIDER ](https://zenodo.org/record/3888300#.YK94M6gzY2w) for training our deep learning models.
 
