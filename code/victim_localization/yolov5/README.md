@@ -1,12 +1,11 @@
-# YOLOv5 for Victim Localization
+# Real Time Victim Localization with YOLOv5
 Detecting humans and vehicles in a disaster classified image is used to estimate the number of victims stuck in disaster affected area using object detection techniques. This repository contains pre trained models for object detection on AIDER Detect using [You Only Look Once](https://arxiv.org/abs/1506.02640)
 
 ![yolov5_detection](/code/victim_localization/yolov5/runs/detect/exp/normal_image0054.jpg)
 
-## AIDER Detect
-We have created a new dataset for object detection on aerial disaster imagery – named as AIDER Detect. It contains 2 Classes – person and vehicle and about 1428 images containing 6900 vehicles and 2100 humans in total.
+## Dataset
+We have used [Object Detection Dataset for Emergency Response- ODDER for training YOLO models](https://www.kaggle.com/maryamsana/yolov5emergencyresponse)
 
-![Aider_detect](/code/victim_localization/yolov3/resources/aider_detect.jpg)
 
 ## Pre-Trained Model
 We have trained the following models based on YOLOv5 on AIDER Detect with following hyperparameters:
