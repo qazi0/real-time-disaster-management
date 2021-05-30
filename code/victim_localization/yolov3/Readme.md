@@ -22,10 +22,10 @@ We have trained the following models based on YOLOv3 and YOLOv4 on AIDER Detect 
 | Model | Precision | Recall | mAP@0.5 | FPS - GTX 1660 Ti |
 |-------|-----------|--------|---------|-------------------|
 | YOLOv3 | 0.307	  | 0.656  | 0.48	   |31.62|
-| Tiny YOLOv3| 0.377| 0.267  |	0.196  | 94|
+| Tiny YOLOv3| 0.34| 0.243 |	0.153  | 94|
 | Tiny YOLOv4| 0.221|	0.666  |	0.441	 |79.2|
 
-Weights of pretrained models can be found in /weights folder
+Weights of pretrained models can be found in weights/ folder
 
 ## Evaluation
 To evaluate the model use `test.py` script
