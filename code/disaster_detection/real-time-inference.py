@@ -31,7 +31,12 @@ def run_inference(model, transforms, args):
     input_shape = (1,3,240,240) if args.model == 'ernet' else (1,3,140,140)
 
     print("Running inference...")
-    vs = WebcamVideoStream(src=0).start()
+
+    if args.video:
+        vs = FileVideoStream(args.video).start()
+    else:
+        vs = WebcamVideoStream(src=0).start()
+
     # loop over some frames...this time using the threaded stream
     while True:
         frame = imutils.resize(vs.read(), width=args.width, height=args.height)
@@ -79,7 +84,8 @@ def run_inference(model, transforms, args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Real-time inference testing')
-    parser.add_argument('--model', type=str, default='ernet')
+    parser.add_argument('--model', type=str, default='squeeze-redconv')
+    parser.add_argument('--video', type=str, default=None, help='path to a video to run inference on it')
     parser.add_argument('--no-cuda', action='store_true', default=False, help='disables CUDA inference')
     parser.add_argument('--trt', action='store_true', help='Do TensorRT inference too')
     parser.add_argument('--width', type=int, default=640,
