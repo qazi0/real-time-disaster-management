@@ -37,7 +37,6 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=str, default=None, help='Suffix to append at the output file name')
     parser.add_argument('--weights', type=str, default=None, help='Path to pre-trained PyTorch weights (.pt) file')
     parser.add_argument('--quant', type=str, default='fp16', metavar='N',help='quantization scheme to use (default: fp16)')
-    parser.add_argument('--root-dir', type=str, default='AIDER',help='path to the root directory of AIDER')
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
