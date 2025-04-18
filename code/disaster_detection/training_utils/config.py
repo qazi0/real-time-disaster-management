@@ -1,8 +1,11 @@
 import os
 import json
+import logging
+import torch
 from dataclasses import dataclass, field, asdict
 from typing import Optional
-import torch
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class TrainingConfig:
@@ -98,4 +101,5 @@ class TrainingConfig:
         """Save config to JSON file."""
         config_path = os.path.join(self.log_dir, 'config.json')
         with open(config_path, 'w') as f:
-            json.dump(asdict(self), f, indent=4) 
+            json.dump(asdict(self), f, indent=4)
+        logger.info(f"Config saved to {config_path}") 
