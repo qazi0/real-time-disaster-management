@@ -1,183 +1,199 @@
-import torch
-import time
-import argparse
 import os
+import time
+import torch
+import argparse
+import logging
+import numpy as np
+from typing import Dict, List, Tuple
+from tqdm import tqdm
+
 from torch.utils.data import DataLoader
-from dataloaders.aider import AIDER
-from dataloaders.aider import aider_transforms, squeeze_transforms
-from pytorch_lightning.metrics import F1
+from torchmetrics.classification import F1Score, Accuracy, Precision, Recall, ConfusionMatrix
+from dataloaders.aider import AIDER, create_data_loaders, worker_init_fn
+from model.ernet import ErNET
+from model.squeeze_ernet import Squeeze_ErNET
+from model.squeeze_ernet_redconv import Squeeze_RedConv
 
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-def load_data(args):
-    transformed_dataset = AIDER("dataloaders/aider_labels.csv", args.root_dir, transform=aider_transforms if args.model == 'ernet' else squeeze_transforms)
-    total_count = 6432
-    train_count = int(0.5 * total_count)
-    valid_count = int((0.5 - args.test_pc / 100) * total_count)
-    test_count = total_count - train_count - valid_count
-    train_set, valid_set, test_set = torch.utils.data.random_split(transformed_dataset,
-                                                                   (train_count, valid_count, test_count))
-    test_loader = DataLoader(test_set, batch_size=16, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
-    print('Loaded all data.')
-    return test_loader
-
-
-def evaluate_performance(test_model, input_tensor, args):
-    test_model.eval()
-    time_list = []
-    num_hits = 0
-    correct = 0
-    f1_list = []
-
-    if args.cuda:
-        print('Initializing inference on CUDA Device: ', args.gpu)
-        # cuDnn configurations
-        torch.backends.cudnn.enabled = True
-        torch.backends.cudnn.benchmark = True
-        torch.cuda.set_device(args.gpu)
-        test_model = test_model.cuda()
-
-        if args.trt:
-            from torch2trt import TRTModule
-            test_model = TRTModule()
-            if args.state is not None:
-                test_model.load_state_dict(torch.load(args.state))
-            else:
-                test_model.load_state_dict(torch.load('tensorrt_state_dicts/{}_{}_trt.pth'.format(args.model, args.quant)))
-
-
-        # Load data
-        test_loader = load_data(args)
-
-        print('Running inference...')
-        for batch_idx, (data, target) in enumerate(test_loader):
-            tic = time.time()
-            torch.cuda.synchronize()
-            data = data.cuda()
-            target = target.cuda()
-
-            # FP16 Inference
-            if args.trt and args.quant == 'fp16':
-                output = test_model(data.half())
-
-            # FP32 Inference
-            else:
-                output = test_model(data)
-
-            torch.cuda.synchronize()
-            preds = output.data.max(1, keepdim=True)[1]
-            time_list.append(time.time() - tic)
-            f1_list.append((preds,target))
-            correct += preds.eq(target.data.view_as(preds)).sum()
-
-       
-        # Calculate F1 score
-        f_score = F1(num_classes=5)
-        score = 0
-        for pred in f1_list:
-            fixed_preds = pred[0].view(1, -1)
-            score += f_score(fixed_preds[0].cpu(), pred[1].cpu()) * 100
-        
-        score /= len(f1_list)
-
-        # Calculate total time
-        time_list = time_list[1:]
-
-        # Print Statistics
-        print("     + Done ", len(test_loader.dataset), " iterations inference !")
-        print("     + Total time cost: {}s".format(sum(time_list)))
-        print("     + Average time cost: {}s".format(sum(time_list) / len(test_loader.dataset)))
-        print('     + Accuracy: %.2f%%' % (100. * correct.float() / len(test_loader.dataset)))
-
-        if args.trt:
-            print("     + TensorRT Frames Per Second ({} iterations): {:.2f} FPS".format(len(test_loader.dataset),1 / (sum(time_list) / len(test_loader.dataset))))
-
-        else:
-            print("     + Frames Per Second ({} iterations): {:.2f} FPS".format(len(test_loader.dataset),1 / (sum(time_list) / len(test_loader.dataset))))
-        
-        print('     + F1 SCORE : {:.5f}'.format(score))
-
-        if args.trt:
-            print('     + Output data type: ', output.dtype)
-
+def load_model(model_name: str, weights_path: str, device: torch.device) -> torch.nn.Module:
+    """Load model and weights."""
+    # Initialize model based on name
+    if model_name == 'ernet':
+        model = ErNET()
+    elif model_name == 'squeeze-ernet':
+        model = Squeeze_ErNET()
+    elif model_name == 'squeeze-redconv':
+        model = Squeeze_RedConv()
     else:
-        print('Running inference on CPU')
+        raise ValueError(f"Unsupported model: {model_name}")
+    
+    # Load weights
+    checkpoint = torch.load(weights_path, map_location=device)
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        # Modern checkpoint format
+        model.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        # Legacy format (just the model)
+        model.load_state_dict(checkpoint)
+    
+    model = model.to(device)
+    model.eval()
+    return model
 
-        # Load data
-        test_loader = load_data(args)
+def evaluate_model(
+    model: torch.nn.Module,
+    test_loader: DataLoader,
+    device: torch.device,
+    use_trt: bool = False,
+    quant: str = 'fp16'
+) -> Dict[str, float]:
+    """Evaluate model on test set."""
+    # Initialize metrics
+    accuracy = Accuracy(task="multiclass", num_classes=5).to(device)
+    f1 = F1Score(task="multiclass", num_classes=5).to(device)
+    precision = Precision(task="multiclass", num_classes=5).to(device)
+    recall = Recall(task="multiclass", num_classes=5).to(device)
+    confusion_matrix = ConfusionMatrix(task="multiclass", num_classes=5).to(device)
+    
+    # Initialize timing metrics
+    inference_times = []
+    
+    # Evaluate
+    with torch.no_grad():
+        for data, target in tqdm(test_loader, desc="Evaluating"):
+            data, target = data.to(device), target.to(device)
+            
+            if use_trt and quant == 'fp16':
+                data = data.half()
+            
+            # Time inference
+            start_time = time.time()
+            output = model(data)
+            torch.cuda.synchronize()  # Wait for GPU to finish
+            inference_times.append(time.time() - start_time)
+            
+            # Update metrics
+            pred = output.argmax(dim=1)
+            accuracy.update(pred, target)
+            f1.update(pred, target)
+            precision.update(pred, target)
+            recall.update(pred, target)
+            confusion_matrix.update(pred, target)
+    
+    # Compute final metrics
+    metrics = {
+        'accuracy': accuracy.compute().item(),
+        'f1_score': f1.compute().item(),
+        'precision': precision.compute().item(),
+        'recall': recall.compute().item(),
+        'avg_inference_time': np.mean(inference_times),
+        'fps': 1.0 / np.mean(inference_times)
+    }
+    
+    # Compute per-class metrics from confusion matrix
+    cm = confusion_matrix.compute()
+    per_class_metrics = compute_per_class_metrics(cm)
+    metrics.update(per_class_metrics)
+    
+    return metrics
 
-        correct = 0
-        f1_list = []
-
-        for batch_idx, (data, target) in enumerate(test_loader):
-            tic = time.time()
-            output = test_model(data)
-            preds = output.data.max(1, keepdim=True)[1]
-            time_list.append(time.time() - tic)
-            f1_list.append((preds,target))
-            correct += preds.eq(target.data.view_as(preds)).sum()
-
-       
-        # Calculate F1 score
-        f_score = F1(num_classes=5)
-        score = 0
-        for pred in f1_list:
-            fixed_preds = pred[0].view(1, -1)
-            score += f_score(fixed_preds[0].cpu(), pred[1].cpu()) * 100
+def compute_per_class_metrics(confusion_matrix: torch.Tensor) -> Dict[str, float]:
+    """Compute per-class metrics from confusion matrix."""
+    metrics = {}
+    classes = ['collapsed building', 'fire', 'flooded areas', 'normal', 'traffic incident']
+    
+    for i, class_name in enumerate(classes):
+        # True positives
+        tp = confusion_matrix[i, i].item()
+        # False positives
+        fp = confusion_matrix[:, i].sum().item() - tp
+        # False negatives
+        fn = confusion_matrix[i, :].sum().item() - tp
         
-        score /= len(f1_list)
+        # Compute metrics
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        
+        metrics.update({
+            f'{class_name}_precision': precision,
+            f'{class_name}_recall': recall,
+            f'{class_name}_f1': f1
+        })
+    
+    return metrics
 
-        # Calculate total time
-        time_list = time_list[1:]
-
-        # Print Statistics
-        print("     + Done ", len(test_loader.dataset), " iterations inference !")
-        print("     + Total time cost: {}s".format(sum(time_list)))
-        print("     + Average time cost: {}s".format(sum(time_list) / len(test_loader.dataset)))
-        print('     + Accuracy: %.2f%%' % (100. * correct.float() / len(test_loader.dataset)))
-        print("     + CPU Frames Per Second ({} iterations): {:.2f} FPS".format(len(test_loader.dataset),1 / (sum(time_list) / len(test_loader.dataset))))
-        print('     + F1 SCORE : {:.5f}'.format(score))
-
+def main():
+    parser = argparse.ArgumentParser(description='Evaluate model on test set')
+    parser.add_argument('--model', type=str, default='ernet',
+                        choices=['ernet', 'squeeze-ernet', 'squeeze-redconv'],
+                        help='model architecture')
+    parser.add_argument('--weights', type=str, required=True,
+                        help='path to model weights')
+    parser.add_argument('--test-split', type=str, default='dataloaders/aider_test.csv',
+                        help='path to test split CSV')
+    parser.add_argument('--root-dir', type=str, default='data/AIDER',
+                        help='path to dataset root directory')
+    parser.add_argument('--batch-size', type=int, default=64,
+                        help='batch size for evaluation')
+    parser.add_argument('--num-workers', type=int, default=4,
+                        help='number of worker threads for data loading')
+    parser.add_argument('--no-cuda', action='store_true',
+                        help='disable CUDA')
+    parser.add_argument('--trt', action='store_true',
+                        help='use TensorRT for inference')
+    parser.add_argument('--quant', type=str, default='fp16',
+                        choices=['fp16', 'fp32'],
+                        help='quantization scheme for TensorRT')
+    
+    args = parser.parse_args()
+    
+    # Set device
+    device = torch.device('cuda' if not args.no_cuda and torch.cuda.is_available() else 'cpu')
+    logger.info(f"Using device: {device}")
+    
+    # Create test loader
+    _, _, test_loader = create_data_loaders(
+        train_csv=None,
+        val_csv=None,
+        test_csv=args.test_split,
+        root_dir=args.root_dir,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        use_albumentations=False,  # No augmentation for evaluation
+        image_size=240 if args.model == 'ernet' else 140,
+        pin_memory=True,
+        prefetch_factor=2,
+        persistent_workers=True
+    )
+    
+    # Load model
+    model = load_model(args.model, args.weights, device)
+    
+    # Evaluate
+    metrics = evaluate_model(model, test_loader, device, args.trt, args.quant)
+    
+    # Print results
+    logger.info("\nEvaluation Results:")
+    logger.info(f"Accuracy: {metrics['accuracy']:.4f}")
+    logger.info(f"F1 Score: {metrics['f1_score']:.4f}")
+    logger.info(f"Precision: {metrics['precision']:.4f}")
+    logger.info(f"Recall: {metrics['recall']:.4f}")
+    logger.info(f"Average Inference Time: {metrics['avg_inference_time']:.4f} seconds")
+    logger.info(f"FPS: {metrics['fps']:.2f}")
+    
+    logger.info("\nPer-class Metrics:")
+    for class_name in ['collapsed building', 'fire', 'flooded areas', 'normal', 'traffic incident']:
+        logger.info(f"\n{class_name}:")
+        logger.info(f"  Precision: {metrics[f'{class_name}_precision']:.4f}")
+        logger.info(f"  Recall: {metrics[f'{class_name}_recall']:.4f}")
+        logger.info(f"  F1 Score: {metrics[f'{class_name}_f1']:.4f}")
 
 if __name__ == '__main__':
-
-    parser = argparse.ArgumentParser(description='TensorRT Inference Evaluation Script')
-    parser.add_argument('--model', type=str, default='ernet', help='Model to use (ernet | squeeze-ernet | squeeze-redconv)')
-    parser.add_argument('--weights', type=str, default=None, help='Path to pre-trained PyTorch weights (.pt) file')
-    parser.add_argument('--state', type=str, default=None, help='Path to TensorRT model state dict (.pth)')
-    parser.add_argument('--test-pc', type=int, default=30, metavar='N',help='percentage of data to use for testing (default: 30%)')
-    parser.add_argument('--quant', type=str, default='fp16', metavar='N',help='quantization scheme to use (default: fp16)')
-    parser.add_argument('--gpu', type=int, default=0, metavar='N',help='gpu device to use (default: 0)')
-    parser.add_argument('--trt', action='store_true', default=False, help='Perform TensorRT inference')
-    parser.add_argument('--no-cuda', action='store_true', default=False, help='disables CUDA inference')
-    parser.add_argument('--root-dir', type=str, default='AIDER',help='path to the root directory of AIDER')
-    args = parser.parse_args()
-    args.cuda = not args.no_cuda and torch.cuda.is_available()
-
-    torch.manual_seed(1947)
-    
-    model = None
-    input_image = None
-
-    if args.model == 'ernet':
-        if not args.weights:
-            args.weights = 'weights/ernet.pt'
-        input_image = torch.randn(1, 3, 240, 240)
-        print('ErNet Speed testing [',args.quant,'] with AIDER test images...')
-
-    elif args.model == 'squeeze-ernet':
-        if not args.weights:
-            args.weights = 'weights/Squeeze-ernet-92f1score.pt'
-        input_image = torch.randn(1, 3, 140, 140)
-        print('Squeeze_ErNet Speed [',args.quant,'] with AIDER test images...')
-
-    elif args.model == 'squeeze-redconv':
-        if not args.weights:
-            args.weights = 'weights/Squeeze-ernet-redconv92acc.pt'
-        input_image = torch.randn(1, 3, 140, 140)
-        print('Squeeze ErNet Speed (RedConv) [',args.quant,'] with AIDER test images...')
-
-    model = torch.load(args.weights, map_location='cpu')
-
-    # To speed up inference by disabling gradients
-    with torch.no_grad():
-        evaluate_performance(model, input_image, args)
+    main()
