@@ -20,30 +20,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def load_model(model_name: str, weights_path: str, device: torch.device) -> torch.nn.Module:
+def load_model(model_name: str, weights_path: str, device: torch.device, use_trt: bool = False, quant: str = 'fp16') -> torch.nn.Module:
     """Load model and weights."""
-    # Initialize model based on name
-    if model_name == 'ernet':
-        model = ErNET()
-    elif model_name == 'squeeze-ernet':
-        model = Squeeze_ErNET()
-    elif model_name == 'squeeze-redconv':
-        model = Squeeze_RedConv()
-    else:
-        raise ValueError(f"Unsupported model: {model_name}")
-    
-    # Load weights
-    checkpoint = torch.load(weights_path, map_location=device)
-    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-        # Modern checkpoint format
-        model.load_state_dict(checkpoint['model_state_dict'])
-    else:
-        # Legacy format (just the model)
-        model.load_state_dict(checkpoint)
-    
-    model = model.to(device)
-    model.eval()
-    return model
+    try:
+        if use_trt:
+            logger.info(f"Loading TensorRT model from {weights_path}")
+            from torch2trt import TRTModule
+            model = TRTModule()
+            model.load_state_dict(torch.load(weights_path))
+            model = model.to(device)
+            model.eval()
+            return model
+        
+        # Initialize model based on name
+        if model_name == 'ernet':
+            model = ErNET()
+        elif model_name == 'squeeze-ernet':
+            model = Squeeze_ErNET()
+        elif model_name == 'squeeze-redconv':
+            model = Squeeze_RedConv()
+        else:
+            raise ValueError(f"Unsupported model: {model_name}")
+        
+        # Load weights
+        checkpoint = torch.load(weights_path, map_location=device)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            # Modern checkpoint format
+            model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            # Legacy format (just the model)
+            model.load_state_dict(checkpoint)
+        
+        model = model.to(device)
+        model.eval()
+        return model
+        
+    except Exception as e:
+        logger.error(f"Error loading model: {str(e)}")
+        raise
 
 def preprocess_frame(
     frame: np.ndarray,
@@ -144,7 +158,7 @@ def main():
     logger.info(f"Using device: {device}")
     
     # Initialize model
-    model = load_model(args.model, args.weights, device)
+    model = load_model(args.model, args.weights, device, args.trt, args.quant)
     
     # Get appropriate transforms and input shape
     transforms = aider_transforms if args.model == 'ernet' else squeeze_transforms
