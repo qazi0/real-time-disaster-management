@@ -481,7 +481,7 @@ def create_data_loaders(
         use_albumentations=use_albumentations,
         image_size=image_size,
         is_training=True
-    )
+    ) if train_csv is not None else None
     
     val_dataset = AIDER(
         csv_file=val_csv,
@@ -489,7 +489,7 @@ def create_data_loaders(
         use_albumentations=use_albumentations,
         image_size=image_size,
         is_training=False
-    )
+    ) if val_csv is not None else None
     
     test_dataset = AIDER(
         csv_file=test_csv,
@@ -497,7 +497,7 @@ def create_data_loaders(
         use_albumentations=use_albumentations,
         image_size=image_size,
         is_training=False
-    )
+    ) if test_csv is not None else None 
     
     # Create data loaders
     train_loader = DataLoader(
@@ -510,7 +510,7 @@ def create_data_loaders(
         worker_init_fn=worker_init_fn,
         prefetch_factor=prefetch_factor if num_workers > 0 else None,
         persistent_workers=persistent_workers if num_workers > 0 else False
-    )
+    ) if train_dataset is not None else None
     
     val_loader = DataLoader(
         val_dataset,
@@ -522,7 +522,7 @@ def create_data_loaders(
         worker_init_fn=worker_init_fn,
         prefetch_factor=prefetch_factor if num_workers > 0 else None,
         persistent_workers=persistent_workers if num_workers > 0 else False
-    )
+    ) if val_dataset is not None else None
     
     test_loader = DataLoader(
         test_dataset,
@@ -534,8 +534,9 @@ def create_data_loaders(
         worker_init_fn=worker_init_fn,
         prefetch_factor=prefetch_factor if num_workers > 0 else None,
         persistent_workers=persistent_workers if num_workers > 0 else False
-    )
+    ) if test_dataset is not None else None
     
-    logger.info(f"Created data loaders with {len(train_dataset)} training, {len(val_dataset)} validation, and {len(test_dataset)} test samples")
+    if train_dataset is not None and val_dataset is not None and test_dataset is not None:
+        logger.info(f"Created data loaders with {len(train_dataset)} training, {len(val_dataset)} validation, and {len(test_dataset)} test samples")
     
     return train_loader, val_loader, test_loader
