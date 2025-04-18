@@ -89,16 +89,16 @@ def parse_args() -> TrainingConfig:
     # Checkpointing settings
     parser.add_argument('--checkpoint-dir', type=str, default='saves',
                         help='directory to save checkpoints (default: saves)')
-    parser.add_argument('--checkpoint-freq', type=int, default=1,
-                        help='checkpoint frequency in epochs (default: 1)')
+    parser.add_argument('--checkpoint-freq', type=int, default=30,
+                        help='checkpoint frequency in epochs (default: 30)')
     parser.add_argument('--save-best-only', action='store_true',
                         help='save only the best model (based on validation accuracy)')
                         
     # Early stopping settings
     parser.add_argument('--no-early-stopping', action='store_true',
                         help='disable early stopping')
-    parser.add_argument('--patience', type=int, default=10,
-                        help='patience for early stopping (default: 10)')
+    parser.add_argument('--patience', type=int, default=50,
+                        help='patience for early stopping (default: 50)')
                         
     # Misc settings
     parser.add_argument('--seed', type=int, default=42,
