@@ -1,33 +1,42 @@
 import os
 import sys
 import time
-import shutil
-import json
+import string
+import uuid
 import logging
-from typing import Dict, List, Optional, Tuple, Union, Any, Callable
-from pathlib import Path
-from dataclasses import dataclass, field, asdict
-import datetime
 import random
-import numpy as np
-from tqdm import tqdm
-import matplotlib.pyplot as plt
+from dataclasses import asdict
+from typing import Dict, Tuple, List
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torch.optim.lr_scheduler import OneCycleLR, CosineAnnealingWarmRestarts
+
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler, autocast
-import torchvision.models as models
-import torchmetrics
+from torch.optim import Adam, SGD, AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR, ReduceLROnPlateau
 from torchmetrics.classification import F1Score, Accuracy, Precision, Recall, ConfusionMatrix
-from model.label_smoothing import LabelSmoothingCrossEntropy
+from torchinfo import summary
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+import numpy as np
+from tqdm import tqdm
+
 from model.ernet import ErNET
 from model.squeeze_ernet import Squeeze_ErNET
 from model.squeeze_ernet_redconv import Squeeze_RedConv
+from model.label_smoothing import LabelSmoothingCrossEntropy
 from dataloaders.aider import AIDER, create_data_loaders, worker_init_fn
+from training_utils import (
+    TrainingConfig,
+    EarlyStopping,
+    AverageMeter,
+    plot_training_curves,
+    train_epoch,
+    validation_epoch,
+    test_epoch,
+    parse_args
+)
 
 # Setup logging
 logging.basicConfig(
@@ -48,118 +57,6 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = True  # Still use benchmark for speed
-import torchsummary
-import argparse
-import string
-import uuid
-
-from training_utils import (
-    TrainingConfig,
-    EarlyStopping,
-    AverageMeter,
-    plot_training_curves,
-    train_epoch,
-    validation_epoch,
-    test_epoch
-)
-
-@dataclass
-class TrainingConfig:
-    """Configuration for training."""
-    # Model settings
-    model: str = "ernet"  # Options: "ernet", "squeeze-ernet", "squeeze-redconv"
-    pretrained: bool = False
-    resume: bool = False
-    weights: Optional[str] = None
-    summary: bool = False
-    
-    # Data settings
-    root_dir: str = "data/AIDER"
-    train_split: str = "dataloaders/aider_train.csv"
-    val_split: str = "dataloaders/aider_val.csv"
-    test_split: str = "dataloaders/aider_test.csv"
-    image_size: int = 240
-    use_albumentations: bool = True
-    num_classes: int = 5
-    
-    # Dataloader settings
-    batch_size: int = 64
-    num_workers: int = 8
-    pin_memory: bool = True
-    prefetch_factor: int = 2
-    persistent_workers: bool = True
-    
-    # Training settings
-    epochs: int = 100
-    optimizer: str = "adamw"  # Options: "adam", "adamw", "sgd"
-    lr: float = 3e-4
-    min_lr: float = 1e-6
-    weight_decay: float = 0.01
-    momentum: float = 0.9
-    label_smoothing: float = 0.1
-    grad_clip: float = 1.0
-    grad_accum_steps: int = 1
-    
-    # Learning rate scheduler settings
-    scheduler: str = "onecycle"  # Options: "onecycle", "cosine"
-    warmup_epochs: int = 5
-    warmup_ratio: float = 0.1
-    
-    # Regularization settings
-    dropout: float = 0.2
-    augment: bool = True
-    mixup_alpha: float = 0.2
-    cutmix_alpha: float = 0.0
-    
-    # Mixed precision settings
-    use_amp: bool = True
-    
-    # Checkpointing settings
-    checkpoint_dir: str = "saves"
-    checkpoint_freq: int = 1
-    save_best_only: bool = True
-    
-    # Early stopping settings
-    early_stopping: bool = True
-    patience: int = 10
-    
-    # Misc settings
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    seed: int = 42
-    debug: bool = False
-    log_dir: str = "logs"
-    collab: bool = False
-    
-    def __post_init__(self):
-        """Initialize derived settings."""
-        # Create directories if they don't exist
-        os.makedirs(self.checkpoint_dir, exist_ok=True)
-        os.makedirs(self.log_dir, exist_ok=True)
-        
-        # Set path for saving model
-        if self.weights is None:
-            self.weights = os.path.join(self.checkpoint_dir, f"{self.model}.pt")
-        
-        # Infer image size from model
-        if self.model == "ernet":
-            self.image_size = 240
-        else:
-            self.image_size = 140
-            
-        # Adjust batch size for smaller models
-        if self.model != "ernet":
-            self.batch_size *= 2
-            
-        # Save config to JSON
-        self.save_config()
-            
-    def save_config(self):
-        """Save config to JSON file."""
-        config_path = os.path.join(self.log_dir, 'config.json')
-        with open(config_path, 'w') as f:
-            json.dump(asdict(self), f, indent=4)
-        logger.info(f"Config saved to {config_path}")
-        
 
 def init_weights(m: nn.Module):
     """Initialize model weights for better convergence."""
@@ -175,13 +72,13 @@ def init_weights(m: nn.Module):
 def get_optimizer(config: TrainingConfig, model: nn.Module) -> torch.optim.Optimizer:
     """Get optimizer based on config."""
     if config.optimizer == "adam":
-        return optim.Adam(
+        return torch.optim.Adam(
             model.parameters(),
             lr=config.lr,
             weight_decay=config.weight_decay
         )
     elif config.optimizer == "adamw":
-        return optim.AdamW(
+        return torch.optim.AdamW(
             model.parameters(),
             lr=config.lr,
             weight_decay=config.weight_decay
@@ -211,11 +108,18 @@ def get_scheduler(config: TrainingConfig, optimizer: torch.optim.Optimizer, trai
             anneal_strategy='cos'
         )
     elif config.scheduler == "cosine":
-        return CosineAnnealingWarmRestarts(
+        return CosineAnnealingLR(
             optimizer,
-            T_0=config.epochs // 3,
-            T_mult=2,
+            T_max=config.epochs // 3,
             eta_min=config.min_lr
+        )
+    elif config.scheduler == "reduce":
+        return ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.1,
+            patience=config.epochs // 3,
+            verbose=True
         )
     else:
         raise ValueError(f"Unsupported scheduler: {config.scheduler}")
@@ -448,182 +352,6 @@ def train_model(config: TrainingConfig) -> Tuple[nn.Module, Dict[str, List[float
     plot_training_curves(train_metrics, config.log_dir, config.model)
     
     return model, {**train_metrics, **test_metrics}
-
-
-def parse_args() -> TrainingConfig:
-    """Parse command line arguments and convert to TrainingConfig."""
-    parser = argparse.ArgumentParser(description='PyTorch ErNet on AIDER Dataset')
-    
-    # Model settings
-    parser.add_argument('--model', type=str, default='ernet',
-                        choices=['ernet', 'squeeze-ernet', 'squeeze-redconv'],
-                        help='model architecture: ernet, squeeze-ernet, squeeze-redconv (default: ernet)')
-    parser.add_argument('--pretrained', action='store_true',
-                        help='use pre-trained model')
-    parser.add_argument('--resume', action='store_true',
-                        help='resume training from checkpoint')
-    parser.add_argument('--weights', type=str, default=None,
-                        help='path to the weights file (.pt) for resuming training or evaluation')
-    parser.add_argument('--summary', action='store_true',
-                        help='print model summary and exit')
-                        
-    # Data settings
-    parser.add_argument('--root-dir', type=str, default='data/AIDER',
-                        help='path to the root directory containing the AIDER dataset')
-    parser.add_argument('--train-split', type=str, default='dataloaders/aider_train.csv',
-                        help='path to the training split CSV file')
-    parser.add_argument('--val-split', type=str, default='dataloaders/aider_val.csv',
-                        help='path to the validation split CSV file')
-    parser.add_argument('--test-split', type=str, default='dataloaders/aider_test.csv',
-                        help='path to the test split CSV file')
-    parser.add_argument('--image-size', type=int, default=None,
-                        help='image size (determined automatically if not specified)')
-    parser.add_argument('--no-albumentations', action='store_true',
-                        help='disable Albumentations transforms and use torchvision transforms')
-                        
-    # Dataloader settings
-    parser.add_argument('--batch-size', type=int, default=64,
-                        help='input batch size for training (default: 64)')
-    parser.add_argument('--num-workers', type=int, default=8,
-                        help='number of worker threads for data loading (default: 8)')
-    parser.add_argument('--no-pin-memory', action='store_true',
-                        help='disable pin_memory in data loader')
-                        
-    # Training settings
-    parser.add_argument('--epochs', type=int, default=100,
-                        help='number of epochs to train (default: 100)')
-    parser.add_argument('--optimizer', type=str, default='adamw',
-                        choices=['adam', 'adamw', 'sgd'],
-                        help='optimizer: adam, adamw, sgd (default: adamw)')
-    parser.add_argument('--lr', type=float, default=3e-4,
-                        help='learning rate (default: 3e-4)')
-    parser.add_argument('--min-lr', type=float, default=1e-6,
-                        help='minimum learning rate (default: 1e-6)')
-    parser.add_argument('--weight-decay', type=float, default=0.01,
-                        help='weight decay (default: 0.01)')
-    parser.add_argument('--momentum', type=float, default=0.9,
-                        help='SGD momentum (default: 0.9)')
-    parser.add_argument('--label-smoothing', type=float, default=0.1,
-                        help='label smoothing factor (default: 0.1)')
-    parser.add_argument('--grad-clip', type=float, default=1.0,
-                        help='gradient clipping norm (default: 1.0)')
-    parser.add_argument('--grad-accum-steps', type=int, default=1,
-                        help='gradient accumulation steps (default: 1)')
-                        
-    # Learning rate scheduler settings
-    parser.add_argument('--scheduler', type=str, default='onecycle',
-                        choices=['onecycle', 'cosine'],
-                        help='learning rate scheduler: onecycle, cosine (default: onecycle)')
-    parser.add_argument('--warmup-epochs', type=int, default=5,
-                        help='number of warmup epochs (default: 5)')
-    parser.add_argument('--warmup-ratio', type=float, default=0.1,
-                        help='warmup ratio (default: 0.1)')
-                        
-    # Regularization settings
-    parser.add_argument('--dropout', type=float, default=0.2,
-                        help='dropout probability (default: 0.2)')
-    parser.add_argument('--no-augment', action='store_true',
-                        help='disable data augmentation')
-    parser.add_argument('--mixup-alpha', type=float, default=0.2,
-                        help='mixup alpha (default: 0.2)')
-    parser.add_argument('--cutmix-alpha', type=float, default=0.0,
-                        help='cutmix alpha (default: 0.0)')
-                        
-    # Mixed precision settings
-    parser.add_argument('--no-amp', action='store_true',
-                        help='disable automatic mixed precision')
-                        
-    # Checkpointing settings
-    parser.add_argument('--checkpoint-dir', type=str, default='saves',
-                        help='directory to save checkpoints (default: saves)')
-    parser.add_argument('--checkpoint-freq', type=int, default=1,
-                        help='checkpoint frequency in epochs (default: 1)')
-    parser.add_argument('--save-best-only', action='store_true',
-                        help='save only the best model (based on validation accuracy)')
-                        
-    # Early stopping settings
-    parser.add_argument('--no-early-stopping', action='store_true',
-                        help='disable early stopping')
-    parser.add_argument('--patience', type=int, default=10,
-                        help='patience for early stopping (default: 10)')
-                        
-    # Misc settings
-    parser.add_argument('--seed', type=int, default=42,
-                        help='random seed (default: 42)')
-    parser.add_argument('--debug', action='store_true',
-                        help='enable debug mode')
-    parser.add_argument('--log-dir', type=str, default='logs',
-                        help='directory to save logs and plots (default: logs)')
-    parser.add_argument('--collab', action='store_true',
-                        help='use Google Colab paths')
-                        
-    args = parser.parse_args()
-    
-    # Create TrainingConfig from args
-    config = TrainingConfig(
-        # Model settings
-        model=args.model,
-        pretrained=args.pretrained,
-        resume=args.resume,
-        weights=args.weights,
-        summary=args.summary,
-        
-        # Data settings
-        root_dir=args.root_dir,
-        train_split=args.train_split,
-        val_split=args.val_split,
-        test_split=args.test_split,
-        image_size=args.image_size if args.image_size is not None else (240 if args.model == 'ernet' else 140),
-        use_albumentations=not args.no_albumentations,
-        
-        # Dataloader settings
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=not args.no_pin_memory,
-        
-        # Training settings
-        epochs=args.epochs,
-        optimizer=args.optimizer,
-        lr=args.lr,
-        min_lr=args.min_lr,
-        weight_decay=args.weight_decay,
-        momentum=args.momentum,
-        label_smoothing=args.label_smoothing,
-        grad_clip=args.grad_clip,
-        grad_accum_steps=args.grad_accum_steps,
-        
-        # Learning rate scheduler settings
-        scheduler=args.scheduler,
-        warmup_epochs=args.warmup_epochs,
-        warmup_ratio=args.warmup_ratio,
-        
-        # Regularization settings
-        dropout=args.dropout,
-        augment=not args.no_augment,
-        mixup_alpha=args.mixup_alpha,
-        cutmix_alpha=args.cutmix_alpha,
-        
-        # Mixed precision settings
-        use_amp=not args.no_amp,
-        
-        # Checkpointing settings
-        checkpoint_dir=args.checkpoint_dir,
-        checkpoint_freq=args.checkpoint_freq,
-        save_best_only=args.save_best_only,
-        
-        # Early stopping settings
-        early_stopping=not args.no_early_stopping,
-        patience=args.patience,
-        
-        # Misc settings
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        seed=args.seed,
-        debug=args.debug,
-        log_dir=args.log_dir,
-        collab=args.collab
-    )
-    
-    return config
 
 
 def main():
