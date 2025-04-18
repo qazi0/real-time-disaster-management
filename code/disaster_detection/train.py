@@ -52,6 +52,17 @@ import torchsummary
 import argparse
 import string
 import uuid
+
+from training_utils import (
+    TrainingConfig,
+    EarlyStopping,
+    AverageMeter,
+    plot_training_curves,
+    train_epoch,
+    validation_epoch,
+    test_epoch
+)
+
 @dataclass
 class TrainingConfig:
     """Configuration for training."""
@@ -150,66 +161,6 @@ class TrainingConfig:
         logger.info(f"Config saved to {config_path}")
         
 
-class AverageMeter:
-    """Computes and stores the average and current value."""
-    def __init__(self, name: str, fmt: str = ':f'):
-        self.name = name
-        self.fmt = fmt
-        self.reset()
-        
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-        
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-        
-    def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
-        return fmtstr.format(**self.__dict__)
-    
-
-class EarlyStopping:
-    """Early stopping to stop training when validation loss doesn't improve."""
-    def __init__(self, patience: int = 7, verbose: bool = False, delta: float = 0, path: str = 'checkpoint.pt'):
-        self.patience = patience
-        self.verbose = verbose
-        self.counter = 0
-        self.best_score = None
-        self.early_stop = False
-        self.val_loss_min = float('inf')
-        self.delta = delta
-        self.path = path
-        
-    def __call__(self, val_loss: float, model: nn.Module):
-        score = -val_loss
-        
-        if self.best_score is None:
-            self.best_score = score
-            self.save_checkpoint(val_loss, model)
-        elif score < self.best_score + self.delta:
-            self.counter += 1
-            logger.info(f'EarlyStopping counter: {self.counter} out of {self.patience}')
-            if self.counter >= self.patience:
-                self.early_stop = True
-        else:
-            self.best_score = score
-            self.save_checkpoint(val_loss, model)
-            self.counter = 0
-            
-    def save_checkpoint(self, val_loss: float, model: nn.Module):
-        """Save model when validation loss decreases."""
-        if self.verbose:
-            logger.info(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}). Saving model...')
-        torch.save(model.state_dict(), self.path)
-        self.val_loss_min = val_loss
-
-
 def init_weights(m: nn.Module):
     """Initialize model weights for better convergence."""
     if isinstance(m, (nn.Conv2d, nn.Linear)):
@@ -246,17 +197,17 @@ def get_optimizer(config: TrainingConfig, model: nn.Module) -> torch.optim.Optim
         raise ValueError(f"Unsupported optimizer: {config.optimizer}")
 
 
-def get_scheduler(config: TrainingConfig, optimizer: torch.optim.Optimizer, steps_per_epoch: int) -> torch.optim.lr_scheduler._LRScheduler:
+def get_scheduler(config: TrainingConfig, optimizer: torch.optim.Optimizer, train_loader: DataLoader) -> torch.optim.lr_scheduler._LRScheduler:
     """Get learning rate scheduler based on config."""
     if config.scheduler == "onecycle":
         return OneCycleLR(
             optimizer,
             max_lr=config.lr,
-            steps_per_epoch=steps_per_epoch,
             epochs=config.epochs,
+            steps_per_epoch=len(train_loader),
             pct_start=config.warmup_ratio,
             div_factor=25.0,
-            final_div_factor=config.lr / config.min_lr,
+            final_div_factor=10000.0,
             anneal_strategy='cos'
         )
     elif config.scheduler == "cosine":
@@ -270,344 +221,13 @@ def get_scheduler(config: TrainingConfig, optimizer: torch.optim.Optimizer, step
         raise ValueError(f"Unsupported scheduler: {config.scheduler}")
 
 
-def train_epoch(
-    config: TrainingConfig,
-    model: nn.Module,
-    train_loader: DataLoader,
-    criterion: nn.Module,
-    optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler._LRScheduler,
-    scaler: GradScaler,
-    epoch: int,
-    device: torch.device
-) -> Dict[str, float]:
-    """Train for one epoch.
-    
-    Args:
-        config: Training configuration
-        model: Model to train
-        train_loader: Training data loader
-        criterion: Loss function
-        optimizer: Optimizer
-        scheduler: Learning rate scheduler
-        scaler: Gradient scaler for mixed precision
-        epoch: Current epoch
-        device: Device to train on
-        
-    Returns:
-        Dictionary of metrics
-    """
-    model.train()
-    
-    # Metrics
-    batch_time = AverageMeter('Time', ':6.3f')
-    data_time = AverageMeter('Data', ':6.3f')
-    losses = AverageMeter('Loss', ':.4e')
-    accuracy = Accuracy(task="multiclass", num_classes=config.num_classes).to(device)
-    f1 = F1Score(task="multiclass", num_classes=config.num_classes).to(device)
-    
-    # Progress bar
-    progress = tqdm(enumerate(train_loader), total=len(train_loader), 
-                    desc=f"Train Epoch: {epoch}/{config.epochs}")
-    
-    # Reset gradient accumulation counter
-    optimizer.zero_grad()
-    
-    end = time.time()
-    for batch_idx, (data, target) in progress:
-        # Measure data loading time
-        data_time.update(time.time() - end)
-        
-        # Move data to device
-        data, target = data.to(device), target.to(device)
-        
-        # Forward pass with mixed precision
-        with autocast(enabled=config.use_amp):
-            output = model(data)
-            loss = criterion(output, target)
-            
-            # Scale loss by accumulation steps
-            loss = loss / config.grad_accum_steps
-        
-        # Backward pass with gradient accumulation
-        scaler.scale(loss).backward()
-        
-        # Gradient accumulation
-        if (batch_idx + 1) % config.grad_accum_steps == 0 or (batch_idx + 1) == len(train_loader):
-            # Clip gradients to prevent exploding gradients
-            if config.grad_clip > 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
-            
-            # Update weights
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad()
-            
-            # Update learning rate
-            if config.scheduler == "onecycle":
-                scheduler.step()
-        
-        # Update metrics
-        losses.update(loss.item() * config.grad_accum_steps, data.size(0))
-        with torch.no_grad():
-            preds = torch.argmax(output, dim=1)
-            accuracy.update(preds, target)
-            f1.update(preds, target)
-        
-        # Update progress bar
-        progress.set_postfix({
-            'loss': f"{losses.avg:.4f}",
-            'acc': f"{accuracy.compute().item():.4f}",
-            'lr': f"{optimizer.param_groups[0]['lr']:.6f}"
-        })
-        
-        # Measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
-    
-    # Compute final metrics
-    metrics = {
-        'train_loss': losses.avg,
-        'train_acc': accuracy.compute().item(),
-        'train_f1': f1.compute().item(),
-        'lr': optimizer.param_groups[0]['lr']
-    }
-    
-    # Log metrics
-    logger.info(f"Train Epoch: {epoch} "
-                f"Loss: {metrics['train_loss']:.4f} "
-                f"Acc: {metrics['train_acc']:.4f} "
-                f"F1: {metrics['train_f1']:.4f} "
-                f"LR: {metrics['lr']:.6f}")
-    
-    return metrics
-
-
-def validation_epoch(
-    config: TrainingConfig,
-    model: nn.Module,
-    val_loader: DataLoader,
-    criterion: nn.Module,
-    epoch: int,
-    device: torch.device
-) -> Dict[str, float]:
-    """Validate model on validation set.
-    
-    Args:
-        config: Training configuration
-        model: Model to validate
-        val_loader: Validation data loader
-        criterion: Loss function
-        epoch: Current epoch
-        device: Device to validate on
-        
-    Returns:
-        Dictionary of metrics
-    """
-    model.eval()
-    
-    # Metrics
-    losses = AverageMeter('Loss', ':.4e')
-    accuracy = Accuracy(task="multiclass", num_classes=config.num_classes).to(device)
-    f1 = F1Score(task="multiclass", num_classes=config.num_classes).to(device)
-    precision = Precision(task="multiclass", num_classes=config.num_classes).to(device)
-    recall = Recall(task="multiclass", num_classes=config.num_classes).to(device)
-    
-    # Progress bar
-    progress = tqdm(enumerate(val_loader), total=len(val_loader), 
-                    desc=f"Val Epoch: {epoch}/{config.epochs}")
-    
-    with torch.no_grad():
-        for batch_idx, (data, target) in progress:
-            # Move data to device
-            data, target = data.to(device), target.to(device)
-            
-            # Forward pass
-            output = model(data)
-            loss = criterion(output, target)
-            
-            # Update metrics
-            losses.update(loss.item(), data.size(0))
-            preds = torch.argmax(output, dim=1)
-            accuracy.update(preds, target)
-            f1.update(preds, target)
-            precision.update(preds, target)
-            recall.update(preds, target)
-            
-            # Update progress bar
-            progress.set_postfix({
-                'loss': f"{losses.avg:.4f}",
-                'acc': f"{accuracy.compute().item():.4f}"
-            })
-    
-    # Compute final metrics
-    metrics = {
-        'val_loss': losses.avg,
-        'val_acc': accuracy.compute().item(),
-        'val_f1': f1.compute().item(),
-        'val_precision': precision.compute().item(),
-        'val_recall': recall.compute().item()
-    }
-    
-    # Log metrics
-    logger.info(f"Validation Epoch: {epoch} "
-                f"Loss: {metrics['val_loss']:.4f} "
-                f"Acc: {metrics['val_acc']:.4f} "
-                f"F1: {metrics['val_f1']:.4f} "
-                f"Precision: {metrics['val_precision']:.4f} "
-                f"Recall: {metrics['val_recall']:.4f}")
-    
-    return metrics
-
-
-def test_epoch(
-    config: TrainingConfig,
-    model: nn.Module,
-    test_loader: DataLoader,
-    criterion: nn.Module,
-    device: torch.device
-) -> Dict[str, float]:
-    """Test model on test set.
-    
-    Args:
-        config: Training configuration
-        model: Model to test
-        test_loader: Test data loader
-        criterion: Loss function
-        device: Device to test on
-        
-    Returns:
-        Dictionary of metrics
-    """
-    model.eval()
-    
-    # Metrics
-    losses = AverageMeter('Loss', ':.4e')
-    accuracy = Accuracy(task="multiclass", num_classes=config.num_classes).to(device)
-    f1 = F1Score(task="multiclass", num_classes=config.num_classes).to(device)
-    precision = Precision(task="multiclass", num_classes=config.num_classes).to(device)
-    recall = Recall(task="multiclass", num_classes=config.num_classes).to(device)
-    confmat = ConfusionMatrix(task="multiclass", num_classes=config.num_classes).to(device)
-    
-    # Progress bar
-    progress = tqdm(enumerate(test_loader), total=len(test_loader), desc="Testing")
-    
-    # Collect all predictions and targets
-    all_preds = []
-    all_targets = []
-    
-    with torch.no_grad():
-        for batch_idx, (data, target) in progress:
-            # Move data to device
-            data, target = data.to(device), target.to(device)
-            
-            # Forward pass
-            output = model(data)
-            loss = criterion(output, target)
-            
-            # Update metrics
-            losses.update(loss.item(), data.size(0))
-            preds = torch.argmax(output, dim=1)
-            accuracy.update(preds, target)
-            f1.update(preds, target)
-            precision.update(preds, target)
-            recall.update(preds, target)
-            confmat.update(preds, target)
-            
-            # Collect predictions and targets
-            all_preds.extend(preds.cpu().numpy())
-            all_targets.extend(target.cpu().numpy())
-            
-            # Update progress bar
-            progress.set_postfix({
-                'loss': f"{losses.avg:.4f}",
-                'acc': f"{accuracy.compute().item():.4f}"
-            })
-    
-    # Compute confusion matrix
-    cm = confmat.compute().cpu().numpy()
-    
-    # Compute per-class metrics
-    per_class_precision = np.diag(cm) / np.sum(cm, axis=0)
-    per_class_recall = np.diag(cm) / np.sum(cm, axis=1)
-    per_class_f1 = 2 * (per_class_precision * per_class_recall) / (per_class_precision + per_class_recall)
-    
-    # Class names
-    class_names = ['collapsed_building', 'fire', 'flooded_areas', 'normal', 'traffic_incident']
-    
-    # Print classification report
-    logger.info("\nClassification Report:")
-    logger.info(f"{'Class':<20} {'Precision':<10} {'Recall':<10} {'F1-Score':<10}")
-    logger.info('-' * 50)
-    for i, name in enumerate(class_names):
-        logger.info(f"{name:<20} {per_class_precision[i]:.4f}     {per_class_recall[i]:.4f}     {per_class_f1[i]:.4f}")
-    logger.info('-' * 50)
-    
-    # Log confusion matrix (optionally save as image)
-    logger.info("\nConfusion Matrix:")
-    logger.info(cm)
-    
-    # Plot confusion matrix
-    plt.figure(figsize=(10, 8))
-    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-    plt.title('Confusion Matrix')
-    plt.colorbar()
-    tick_marks = np.arange(len(class_names))
-    plt.xticks(tick_marks, class_names, rotation=45)
-    plt.yticks(tick_marks, class_names)
-    
-    # Add text annotations to confusion matrix
-    thresh = cm.max() / 2
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            plt.text(j, i, format(cm[i, j], 'd'),
-                     ha="center", va="center",
-                     color="white" if cm[i, j] > thresh else "black")
-    
-    plt.tight_layout()
-    plt.ylabel('True label')
-    plt.xlabel('Predicted label')
-    
-    # Save confusion matrix
-    os.makedirs(config.log_dir, exist_ok=True)
-    plt.savefig(f"{config.log_dir}/confusion_matrix.png")
-    plt.close()
-    
-    # Compute final metrics
-    metrics = {
-        'test_loss': losses.avg,
-        'test_acc': accuracy.compute().item(),
-        'test_f1': f1.compute().item(),
-        'test_precision': precision.compute().item(),
-        'test_recall': recall.compute().item()
-    }
-    
-    # Log metrics
-    logger.info(f"\nTest Results: "
-                f"Loss: {metrics['test_loss']:.4f} "
-                f"Acc: {metrics['test_acc']:.4f} "
-                f"F1: {metrics['test_f1']:.4f} "
-                f"Precision: {metrics['test_precision']:.4f} "
-                f"Recall: {metrics['test_recall']:.4f}")
-    
-    return metrics
-
-
 def generate_random_string(length: int = 6) -> str:
     """Generate a random string for model naming."""
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
 
 def train_model(config: TrainingConfig) -> Tuple[nn.Module, Dict[str, List[float]]]:
-    """Main training function orchestrating the training process.
-    
-    Args:
-        config: Training configuration
-        
-    Returns:
-        Tuple of (trained model, metrics dictionary)
-    """
+    """Main training function orchestrating the training process."""
     # Set random seed for reproducibility
     random.seed(config.seed)
     np.random.seed(config.seed)
@@ -683,7 +303,7 @@ def train_model(config: TrainingConfig) -> Tuple[nn.Module, Dict[str, List[float
     scheduler = get_scheduler(
         config, 
         optimizer, 
-        steps_per_epoch=len(train_loader) // config.grad_accum_steps
+        train_loader
     )
     
     # Initialize gradient scaler for mixed precision
@@ -828,65 +448,6 @@ def train_model(config: TrainingConfig) -> Tuple[nn.Module, Dict[str, List[float
     plot_training_curves(train_metrics, config.log_dir, config.model)
     
     return model, {**train_metrics, **test_metrics}
-
-
-def plot_training_curves(metrics: Dict[str, List[float]], log_dir: str, model_name: str) -> None:
-    """Plot training curves.
-    
-    Args:
-        metrics: Dictionary of metrics
-        log_dir: Directory to save plots
-        model_name: Name of the model
-    """
-    os.makedirs(log_dir, exist_ok=True)
-    
-    # Plot training and validation loss
-    plt.figure(figsize=(10, 5))
-    plt.plot(metrics['epoch'], metrics['train_loss'], label='Train Loss')
-    plt.plot(metrics['epoch'], metrics['val_loss'], label='Validation Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title(f'{model_name} - Loss')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(os.path.join(log_dir, f"{model_name}_loss.png"))
-    plt.close()
-    
-    # Plot training and validation accuracy
-    plt.figure(figsize=(10, 5))
-    plt.plot(metrics['epoch'], metrics['train_acc'], label='Train Accuracy')
-    plt.plot(metrics['epoch'], metrics['val_acc'], label='Validation Accuracy')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy')
-    plt.title(f'{model_name} - Accuracy')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(os.path.join(log_dir, f"{model_name}_accuracy.png"))
-    plt.close()
-    
-    # Plot training and validation F1 score
-    plt.figure(figsize=(10, 5))
-    plt.plot(metrics['epoch'], metrics['train_f1'], label='Train F1')
-    plt.plot(metrics['epoch'], metrics['val_f1'], label='Validation F1')
-    plt.xlabel('Epoch')
-    plt.ylabel('F1 Score')
-    plt.title(f'{model_name} - F1 Score')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(os.path.join(log_dir, f"{model_name}_f1.png"))
-    plt.close()
-    
-    # Plot learning rate
-    plt.figure(figsize=(10, 5))
-    plt.plot(metrics['epoch'], metrics['lr'])
-    plt.xlabel('Epoch')
-    plt.ylabel('Learning Rate')
-    plt.title(f'{model_name} - Learning Rate')
-    plt.grid(True)
-    plt.savefig(os.path.join(log_dir, f"{model_name}_lr.png"))
-    plt.close()
-    
-    logger.info(f"Training plots saved to {log_dir}")
 
 
 def parse_args() -> TrainingConfig:
