@@ -19,6 +19,9 @@ def parse_args() -> TrainingConfig:
                         help='path to the weights file (.pt) for resuming training or evaluation')
     parser.add_argument('--summary', action='store_true',
                         help='print model summary and exit')
+    parser.add_argument('--loss', type=str, default='label_smoothing_ce',
+                        choices=['label_smoothing_ce', 'focal'],
+                        help='loss function: label_smoothing_ce, focal (default: label_smoothing_ce)')
                         
     # Data settings
     parser.add_argument('--root-dir', type=str, default='data/AIDER',
@@ -120,6 +123,7 @@ def parse_args() -> TrainingConfig:
         resume=args.resume,
         weights=args.weights,
         summary=args.summary,
+        loss=args.loss,
         
         # Data settings
         root_dir=args.root_dir,
