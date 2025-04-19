@@ -1,131 +1,224 @@
-
-import imutils
 import cv2
 import time
 import torch
 import argparse
+import logging
 import numpy as np
+from typing import Tuple, Optional
 from PIL import Image
-from torch2trt import TRTModule
-from imutils.video import WebcamVideoStream
-from imutils.video import FileVideoStream
+from imutils.video import WebcamVideoStream, FileVideoStream
+
+from model.ernet import ErNET
+from model.squeeze_ernet import Squeeze_ErNET
+from model.squeeze_ernet_redconv import Squeeze_RedConv
 from dataloaders.aider import aider_transforms, squeeze_transforms
 
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-def run_inference(model, transforms, args):
-
-    classes =['collapsed building','fire','flooded areas','normal','traffic incident']
-
-    if args.cuda:
-        torch.backends.cudnn.enabled = True
-        torch.backends.cudnn.benchmark = True
-        model = model.cuda()
-
-        if args.trt:
+def load_model(model_name: str, weights_path: str, device: torch.device, use_trt: bool = False, quant: str = 'fp16') -> torch.nn.Module:
+    """Load model and weights."""
+    try:
+        if use_trt:
+            logger.info(f"Loading TensorRT model from {weights_path}")
+            from torch2trt import TRTModule
             model = TRTModule()
-            model.load_state_dict(torch.load('tensorrt_state_dicts/{}_{}_trt.pth'.format(args.model,args.quant)))
+            model.load_state_dict(torch.load(weights_path))
+            model = model.to(device)
+            model.eval()
+            return model
+        
+        # Initialize model based on name
+        if model_name == 'ernet':
+            model = ErNET()
+        elif model_name == 'squeeze-ernet':
+            model = Squeeze_ErNET()
+        elif model_name == 'squeeze-redconv':
+            model = Squeeze_RedConv()
+        else:
+            raise ValueError(f"Unsupported model: {model_name}")
+        
+        # Load weights
+        checkpoint = torch.load(weights_path, map_location=device)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            # Modern checkpoint format
+            model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            # Legacy format (just the model)
+            model.load_state_dict(checkpoint)
+        
+        model = model.to(device)
+        model.eval()
+        return model
+        
+    except Exception as e:
+        logger.error(f"Error loading model: {str(e)}")
+        raise
 
-    # created a *threaded* video stream, allow the camera sensor to warmup
-    prev_frame_time = 0
-    fps_list = []
+def preprocess_frame(
+    frame: np.ndarray,
+    transform,
+    input_shape: Tuple[int, int, int, int],
+    device: torch.device
+) -> torch.Tensor:
+    """Preprocess frame for inference."""
+    # Convert BGR to RGB
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    
+    # Apply transforms
+    pil_image = Image.fromarray(frame)
+    tensor = transform(pil_image)
+    
+    # Reshape and move to device
+    tensor = torch.reshape(tensor, input_shape).to(device)
+    return tensor
 
-    input_shape = (1,3,240,240) if args.model == 'ernet' else (1,3,140,140)
+def run_inference(
+    model: torch.nn.Module,
+    frame: np.ndarray,
+    transform,
+    input_shape: Tuple[int, int, int, int],
+    device: torch.device,
+    use_trt: bool = False,
+    quant: str = 'fp16'
+) -> Tuple[str, float]:
+    """Run inference on a single frame."""
+    # Preprocess frame
+    tensor = preprocess_frame(frame, transform, input_shape, device)
+    
+    # Run inference
+    with torch.no_grad():
+        if use_trt and quant == 'fp16':
+            tensor = tensor.half()
+        output = model(tensor)
+        predicted_class = output.data.max(1, keepdim=True)[1]
+        
+        # Get confidence
+        confidence = torch.nn.functional.softmax(output, dim=1)[0][predicted_class].item() * 100
+    
+    # Map class index to name
+    classes = ['collapsed building', 'fire', 'flooded areas', 'normal', 'traffic incident']
+    predicted_class_name = classes[predicted_class.item()]
+    
+    return predicted_class_name, confidence
 
-    print("Running inference...")
+def visualize_prediction(
+    frame: np.ndarray,
+    prediction: str,
+    confidence: float,
+    fps: float
+) -> np.ndarray:
+    """Visualize prediction on frame."""
+    # Add prediction text
+    text = f"{prediction} ({confidence:.1f}%)"
+    cv2.putText(
+        frame, text, (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+        (255, 255, 255), 2, cv2.LINE_AA
+    )
+    
+    # Add FPS counter
+    cv2.putText(
+        frame, f"FPS: {fps:.1f}", (10, 60),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+        (255, 255, 255), 2, cv2.LINE_AA
+    )
+    
+    return frame
 
+def main():
+    parser = argparse.ArgumentParser(description='Real-time disaster detection inference')
+    parser.add_argument('--model', type=str, default='ernet',
+                        choices=['ernet', 'squeeze-ernet', 'squeeze-redconv'],
+                        help='model architecture')
+    parser.add_argument('--weights', type=str, required=True,
+                        help='path to model weights')
+    parser.add_argument('--video', type=str, default=None,
+                        help='path to video file (if None, use webcam)')
+    parser.add_argument('--width', type=int, default=640,
+                        help='frame width')
+    parser.add_argument('--height', type=int, default=480,
+                        help='frame height')
+    parser.add_argument('--no-cuda', action='store_true',
+                        help='disable CUDA')
+    parser.add_argument('--trt', action='store_true',
+                        help='use TensorRT for inference')
+    parser.add_argument('--quant', type=str, default='fp16',
+                        choices=['fp16', 'fp32'],
+                        help='quantization scheme for TensorRT')
+    
+    args = parser.parse_args()
+    
+    # Set device
+    device = torch.device('cuda' if not args.no_cuda and torch.cuda.is_available() else 'cpu')
+    logger.info(f"Using device: {device}")
+    
+    # Initialize model
+    model = load_model(args.model, args.weights, device, args.trt, args.quant)
+    
+    # Get appropriate transforms and input shape
+    transforms = aider_transforms if args.model == 'ernet' else squeeze_transforms
+    input_shape = (1, 3, 240, 240) if args.model == 'ernet' else (1, 3, 140, 140)
+    
+    # Initialize video stream
     if args.video:
         vs = FileVideoStream(args.video).start()
     else:
         vs = WebcamVideoStream(src=0).start()
-
-    # loop over some frames...this time using the threaded stream
-    while True:
-        frame = vs.read()
-        if frame is None:
-            break
-
-        frame = imutils.resize(frame, width=args.width, height=args.height)
-        img = transforms(Image.fromarray(frame))
-        if args.cuda:
-            img = img.cuda()
-
-        img = torch.reshape(img, input_shape)
-
-        if args.quant and args.trt:
-            output = model(img.half())
-        else:
-            output = model(img)
-
-        predicted_class = output.data.max(1,keepdim=True)[1]
-
-        print("Predicted class is " + classes[predicted_class],end=' ')
-        out = output[0]
-        confidence = int((out[predicted_class]*100)[0][0].item())
-
-        print("with confidence level : " + str(confidence) +'%', end=' \t')
-        text = classes[predicted_class]+' with confidence level '+str(confidence)+'%' 
-        cv2.putText(frame,text,(10,15),cv2.FONT_HERSHEY_SIMPLEX,0.43,(255,255,255),1,cv2.LINE_AA)
-
-        new_frame_time = time.time()
-        fps = 1/(new_frame_time-prev_frame_time) 
-        prev_frame_time = new_frame_time
-
-        print('FPS: {:.3f}'.format(fps))
-        fps_list.append(fps)
+    
+    # Initialize timing variables
+    prev_frame_time = 0
+    fps_list = []
+    
+    logger.info("Starting inference...")
+    try:
+        while True:
+            # Read frame
+            frame = vs.read()
+            if frame is None:
+                break
+            
+            # Resize frame
+            frame = cv2.resize(frame, (args.width, args.height))
+            
+            # Run inference
+            prediction, confidence = run_inference(
+                model, frame, transforms, input_shape,
+                device, args.trt, args.quant
+            )
+            
+            # Calculate FPS
+            new_frame_time = time.time()
+            fps = 1.0 / (new_frame_time - prev_frame_time)
+            prev_frame_time = new_frame_time
+            fps_list.append(fps)
+            
+            # Visualize results
+            frame = visualize_prediction(frame, prediction, confidence, fps)
+            
+            # Display frame
+            cv2.imshow("Disaster Detection", frame)
+            
+            # Break loop on 'q' key
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+    
+    except KeyboardInterrupt:
+        logger.info("Inference interrupted by user")
+    finally:
+        # Cleanup
+        cv2.destroyAllWindows()
+        vs.stop()
         
-        # if fps_update_index % 15 == 0:
-        #     # puting the FPS count on the frame
-        #     old_fps = fps 
-
-        cv2.putText(frame, 'FPS: {:.3f}'.format(fps), (7, 50), cv2.FONT_HERSHEY_SIMPLEX , 0.8, (255, 0, 0), 1, cv2.LINE_AA)
-        cv2.imshow("Frame", frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    print('Average FPS: {:.3f}'.format(sum(fps_list) / len(fps_list)))
-    cv2.destroyAllWindows()
-    vs.stop()
+        # Print statistics
+        avg_fps = sum(fps_list) / len(fps_list)
+        logger.info(f"Average FPS: {avg_fps:.2f}")
+        logger.info(f"Min FPS: {min(fps_list):.2f}")
+        logger.info(f"Max FPS: {max(fps_list):.2f}")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Real-time inference testing')
-    parser.add_argument('--model', type=str, default='squeeze-redconv')
-    parser.add_argument('--video', type=str, default=None, help='path to a video to run inference on it')
-    parser.add_argument('--no-cuda', action='store_true', default=False, help='disables CUDA inference')
-    parser.add_argument('--trt', action='store_true', help='Do TensorRT inference too')
-    parser.add_argument('--width', type=int, default=640,
-                        help='Window width')
-    parser.add_argument('--height', type=int, default=480,
-                        help='Window height')
-    parser.add_argument('--weights', type=str, default=None,
-                        help='path to the trained pytorch weights (.pt) file')
-    parser.add_argument('--quant', type=str, default='fp16', metavar='N',
-                            help='quantization scheme to use (default: fp16)')
-
-    args = parser.parse_args()
-    args.cuda = not args.no_cuda and torch.cuda.is_available()
-
-    if args.trt and args.no_cuda:
-        raise ValueError('TRT inference cannot be done on CPU! Please remove --no-cuda argument.')
-
-    print(args)
-
-    if args.model == 'ernet':
-        transforms = aider_transforms
-        if args.weights is None:
-            args.weights = 'weights/ernet.pt'
-
-    elif args.model == 'squeeze-ernet':
-        transforms = squeeze_transforms
-        if args.weights is None:
-            args.weights = 'weights/Squeeze-ernet-92f1score.pt'
-
-    elif args.model == 'squeeze-redconv':
-        transforms = squeeze_transforms
-        if args.weights is None:
-            args.weights = 'weights/Squeeze-ernet-redconv92acc.pt'
-
-    model = torch.load(args.weights, map_location='cpu').eval()
-
-    with torch.no_grad():
-        run_inference(model, transforms, args)
+    main()
