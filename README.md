@@ -149,3 +149,8 @@ The implementation contains code on following levels:
 - **yolov3:** contains pretrained YOLOv3 and YOLO4 models
 - **yolov5:** contains pretrained YOLOv5 models
 
+
+# Authors
+- Siraj Qazi ([qazi0](https://github.com/qazi0))
+- Maryam Sana ([MaryamSana-1998](https://github.com/MaryamSana-1998))
+
