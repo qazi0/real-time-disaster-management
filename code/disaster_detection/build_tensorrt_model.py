@@ -91,7 +91,6 @@ def build_trt_model(model: torch.nn.Module, input_tensor: torch.Tensor, args) ->
         # Log detailed GPU memory status before conversion
         logger.info(f"GPU memory allocated before conversion: {torch.cuda.memory_allocated() / (1024**2):.2f} MB")
         logger.info(f"GPU memory reserved before conversion: {torch.cuda.memory_reserved() / (1024**2):.2f} MB")
-        logger.info(f"GPU memory cached before conversion: {torch.cuda.memory_cached() / (1024**2):.2f} MB")
         logger.info(f"Max GPU memory allocated: {torch.cuda.max_memory_allocated() / (1024**2):.2f} MB")
         
         # Verify model is in eval mode
