@@ -10,8 +10,9 @@ from typing import Dict, Tuple, List
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.cuda.amp import GradScaler, autocast
 from torch.optim import Adam, SGD, AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR, ReduceLROnPlateau
@@ -26,6 +27,7 @@ from model.ernet import ErNET
 from model.squeeze_ernet import Squeeze_ErNET
 from model.squeeze_ernet_redconv import Squeeze_RedConv
 from model.label_smoothing import LabelSmoothingCrossEntropy
+from model.focal_loss import FocalLoss
 from dataloaders.aider import AIDER, create_data_loaders, worker_init_fn
 from training_utils import (
     TrainingConfig,
@@ -58,6 +60,8 @@ torch.cuda.manual_seed_all(SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = True  # Still use benchmark for speed
 
+
+
 def init_weights(m: nn.Module):
     """Initialize model weights for better convergence."""
     if isinstance(m, (nn.Conv2d, nn.Linear)):
@@ -67,7 +71,6 @@ def init_weights(m: nn.Module):
     elif isinstance(m, nn.BatchNorm2d):
         nn.init.constant_(m.weight, 1)
         nn.init.constant_(m.bias, 0)
-
 
 def get_optimizer(config: TrainingConfig, model: nn.Module) -> torch.optim.Optimizer:
     """Get optimizer based on config."""
@@ -93,7 +96,6 @@ def get_optimizer(config: TrainingConfig, model: nn.Module) -> torch.optim.Optim
     else:
         raise ValueError(f"Unsupported optimizer: {config.optimizer}")
 
-
 def get_scheduler(config: TrainingConfig, optimizer: torch.optim.Optimizer, train_loader: DataLoader) -> torch.optim.lr_scheduler._LRScheduler:
     """Get learning rate scheduler based on config."""
     if config.scheduler == "onecycle":
@@ -110,7 +112,7 @@ def get_scheduler(config: TrainingConfig, optimizer: torch.optim.Optimizer, trai
     elif config.scheduler == "cosine":
         return CosineAnnealingLR(
             optimizer,
-            T_max=config.epochs // 3,
+            T_max=config.epochs,
             eta_min=config.min_lr
         )
     elif config.scheduler == "reduce":
@@ -123,12 +125,6 @@ def get_scheduler(config: TrainingConfig, optimizer: torch.optim.Optimizer, trai
         )
     else:
         raise ValueError(f"Unsupported scheduler: {config.scheduler}")
-
-
-def generate_random_string(length: int = 6) -> str:
-    """Generate a random string for model naming."""
-    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
-
 
 def train_model(config: TrainingConfig) -> Tuple[nn.Module, Dict[str, List[float]]]:
     """Main training function orchestrating the training process."""
@@ -192,23 +188,33 @@ def train_model(config: TrainingConfig) -> Tuple[nn.Module, Dict[str, List[float
         torchsummary.summary(model, input_size, device=str(device))
     
     # Initialize criterion (loss function)
-    try:
-        criterion = LabelSmoothingCrossEntropy(epsilon=config.label_smoothing)
-        logger.info(f"Using label smoothing cross entropy with epsilon={config.label_smoothing}")
-    except ValueError as e:
-        logger.warning(f"Error initializing label smoothing: {e}. Using standard cross entropy.")
-        criterion = nn.CrossEntropyLoss()
-    criterion = criterion.to(device)
+    if config.loss == 'label_smoothing_ce':
+        criterion = LabelSmoothingCrossEntropy(
+            epsilon=config.label_smoothing,
+            reduction='mean'
+        )
+        logger.info(f"Using Label Smoothing Cross Entropy Loss with smoothing factor: {config.label_smoothing}")
+    elif config.loss == 'focal':
+        # Calculate class weights for focal loss
+        class_counts = train_loader.dataset.annotations['label'].value_counts().sort_index()
+        total_samples = len(train_loader.dataset.annotations)
+        class_weights = torch.tensor([total_samples / (len(class_counts) * count) for count in class_counts])
+        class_weights = class_weights / class_weights.sum()  # Normalize weights
+        class_weights = class_weights.to(device)
+        
+        logger.info(f"Class distribution: {class_counts.to_dict()}")
+        logger.info(f"Class weights: {class_weights.tolist()}")
+        
+        criterion = FocalLoss(alpha=class_weights, gamma=2.0)
+        logger.info(f"Using Focal Loss with class weights: {class_weights.tolist()}")
+    else:
+        raise ValueError(f"Unsupported loss function: {config.loss}")
     
     # Initialize optimizer
     optimizer = get_optimizer(config, model)
     
     # Initialize learning rate scheduler
-    scheduler = get_scheduler(
-        config, 
-        optimizer, 
-        train_loader
-    )
+    scheduler = get_scheduler(config, optimizer, train_loader)
     
     # Initialize gradient scaler for mixed precision
     scaler = GradScaler(enabled=config.use_amp)
@@ -353,7 +359,6 @@ def train_model(config: TrainingConfig) -> Tuple[nn.Module, Dict[str, List[float
     
     return model, {**train_metrics, **test_metrics}
 
-
 def main():
     """Main entry point for training."""
     try:
@@ -401,7 +406,6 @@ def main():
     except Exception as e:
         logger.exception(f"An error occurred during training: {e}")
         sys.exit(1)
-
 
 if __name__ == '__main__':
     main()
