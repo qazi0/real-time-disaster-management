@@ -11,11 +11,12 @@ logger = logging.getLogger(__name__)
 class TrainingConfig:
     """Configuration for training."""
     # Model settings
-    model: str = "ernet"  # Options: "ernet", "squeeze-ernet", "squeeze-redconv"
+    model: str = "squeeze-ernet"  # Changed default to squeeze-ernet
     pretrained: bool = False
     resume: bool = False
     weights: Optional[str] = None
     summary: bool = False
+    loss: str = 'label_smoothing_ce'  # Add loss function choice
     
     # Data settings
     root_dir: str = "data/AIDER"
@@ -27,33 +28,33 @@ class TrainingConfig:
     num_classes: int = 5
     
     # Dataloader settings
-    batch_size: int = 64
+    batch_size: int = 32  # Reduced batch size for better generalization
     num_workers: int = 8
     pin_memory: bool = True
     prefetch_factor: int = 2
     persistent_workers: bool = True
     
     # Training settings
-    epochs: int = 100
-    optimizer: str = "adamw"  # Options: "adam", "adamw", "sgd"
-    lr: float = 3e-4
+    epochs: int = 200  # 
+    optimizer: str = "adamw"  # Using AdamW with weight decay
+    lr: float = 3e-4  # learning rate
     min_lr: float = 1e-6
-    weight_decay: float = 0.01
+    weight_decay: float = 0.01 
     momentum: float = 0.9
     label_smoothing: float = 0.1
     grad_clip: float = 1.0
-    grad_accum_steps: int = 1
+    grad_accum_steps: int = 2 
     
     # Learning rate scheduler settings
-    scheduler: str = "onecycle"  # Options: "onecycle", "cosine"
+    scheduler: str = "onecycle"  
     warmup_epochs: int = 5
     warmup_ratio: float = 0.1
     
     # Regularization settings
-    dropout: float = 0.2
+    dropout: float = 0.2  # Increased dropout
     augment: bool = True
-    mixup_alpha: float = 0.2
-    cutmix_alpha: float = 0.0
+    mixup_alpha: float = 0.2 
+    cutmix_alpha: float = 0.1  
     
     # Mixed precision settings
     use_amp: bool = True
@@ -65,7 +66,7 @@ class TrainingConfig:
     
     # Early stopping settings
     early_stopping: bool = True
-    patience: int = 10
+    patience: int = 20  # Increased patience
     
     # Misc settings
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
