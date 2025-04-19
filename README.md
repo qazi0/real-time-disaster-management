@@ -22,6 +22,8 @@ We have added the following additional features to the work of previously mentio
 
 In [code/disaster_detection](/code/disaster_detection/), we propose a method for real time disaster detection and classification using state of the art deep learning techniques. We have used an emergency response dataset called [Aerial Imagery Dataset for Emergency Response - AIDER ](https://zenodo.org/record/3888300#.YK94M6gzY2w) for training our deep learning models.
 
+![Real time streaming](/demo_video/disaster.gif)
+
 ## Aerial Imagery Dataset for Emergency Response
 The dataset contains 5 disaster classes. floods, collapsed buidling, fire, normal and traffic accidents. The aerial images of these disaster classes were collected from multiple sources such as the internet (e.g. google images, bing images, youtube, news agencies web sites, etc.), other databases of general aerial images, and images collected using our own UAV platform. During the data collection process the various disaster events were captured with different resolutions and under various condition with regards to illumination and viewpoint.
  It can be downloaded from [Zenodo](https://zenodo.org/record/3888300) or [Google Drive.](https://drive.google.com/file/d/1EUQ8BiTRn-ePsOUoB2WAPMAI9egbvtY-/view?usp=sharing)
